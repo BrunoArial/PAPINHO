@@ -1,0 +1,1 @@
+PAPINHO é uma arquitetura baseada em Python para orquestração de múltiplos agentes de Inteligência Artificial. Possui um barramento de mensagens (MessageBus) e comunicação assíncrona.
