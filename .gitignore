@@ -1,0 +1,13 @@
+# Ignora ambientes virtuais
+.venv/
+venv/
+env/
+
+# Ignora os arquivos de cache "invisíveis" que o Python cria
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignora arquivos de ambiente (se você usar senhas de API no futuro)
+.env
