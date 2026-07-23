@@ -30,8 +30,14 @@ class LLMAgent(Agent):
         is_from_user = message.role == "user"
         is_mentioned = self.name.lower() in message.content.lower()
         
-        if not is_from_user and not is_mentioned:
-            return
+        # --- NOVA REGRA DE ETIQUETA ---
+        if not is_mentioned:
+            # Se ninguém foi chamado pelo nome na mensagem...
+            if is_from_user and self.name == "Groq":
+                pass # Deixa passar: O Groq é o anfitrião e responde por padrão.
+            else:
+                return # Bloqueia: Os outros agentes ficam quietos até ouvirem seus nomes.
+        # ------------------------------
 
         response_text = await self._call_llm(message)
         self.publish(response_text)
@@ -51,12 +57,12 @@ class LLMAgent(Agent):
             # 2. Monta o pacote: O System Prompt (Persona) + O Histórico (agora limitado)
             messages_payload = [{"role": "system", "content": self.persona}] + self.memory
 
-            # 3. Envia para a Groq
+            # Envia para a Groq
             response = await self.client.chat.completions.create(
                 model="llama-3.1-8b-instant",
                 messages=messages_payload,
                 temperature=0.7,
-                max_tokens=300
+                max_tokens=1024 # <-- Aumenta o limite aqui
             )
             
             # Extrai a resposta

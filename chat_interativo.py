@@ -20,10 +20,23 @@ async def main():
 
     # 1. ADICIONANDO OS AGENTES
     echo_bot = EchoAgent(name="Echo", persona="Eu repito nomes.", bus=bus)
-    llm_bot = LLMAgent(name="Groq", persona="Assistente prestativo.", bus=bus)
+    
+    groq_bot = LLMAgent(
+        name="Groq", 
+        persona="Você é um assistente criativo. Dê ideias geniais e curtas. No final de TODA resposta sua, você DEVE obrigatoriamente escrever a seguinte frase exata: 'O que você acha disso, Revisor?' Vocês irão conversar até acharem a melhor ideia. Não se esqueça de escrever a frase exata no final de TODA resposta sua.", 
+        bus=bus
+    )
+    
+    # O NOVO AGENTE
+    revisor_bot = LLMAgent(
+        name="Revisor", 
+        persona="Sua função é analisar qualquer ideia, apontar os pontos fracos e SEMPRE terminar sua resposta com a frase exata: 'O que você acha da minha crítica, Groq' Vocês irão conversar até acharem a melhor ideia. Não se esqueça de escrever a frase exata no final de TODA resposta sua.", 
+        bus=bus
+    )
 
     await echo_bot.start()
-    await llm_bot.start()
+    await groq_bot.start()
+    await revisor_bot.start() # Ligando o motor do revisor!
 
     # 2. INICIA O OUVINTE NA TELA
     # Isso roda em background para mostrar as mensagens das IAs
@@ -53,7 +66,8 @@ async def main():
     # 4. DESLIGANDO TUDO
     print("\nEncerrando agentes...")
     await echo_bot.stop()
-    await llm_bot.stop()
+    await groq_bot.stop()
+    await revisor_bot.stop()
     print("Chat encerrado!")
 
 if __name__ == "__main__":
