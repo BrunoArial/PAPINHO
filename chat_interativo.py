@@ -3,6 +3,7 @@ from orchestrator.bus import MessageBus
 from orchestrator.models import Message
 from orchestrator.agents.echo_agent import EchoAgent
 from orchestrator.agents.llm_agent import LLMAgent
+from logger_agent import LoggerAgent
 
 async def display_messages(bus: MessageBus):
     """Fica ouvindo o barramento e imprime as mensagens na tela."""
@@ -23,20 +24,24 @@ async def main():
     
     groq_bot = LLMAgent(
         name="Groq", 
-        persona="Você é um assistente criativo. Dê ideias geniais e curtas. No final de TODA resposta sua, você DEVE obrigatoriamente escrever a seguinte frase exata: 'O que você acha disso, Revisor?' Vocês irão conversar até acharem a melhor ideia. Não se esqueça de escrever a frase exata no final de TODA resposta sua.", 
+        persona="Você é um assistente criativo. Dê ideias geniais e curtas. Vocês irão debater até acharem a melhor ideia. REGRA DE OURO: Enquanto estiverem debatendo, termine sua resposta com 'O que você acha disso, Revisor?'. Porém, se o Revisor disser que a ideia está perfeita, você DEVE encerrar a conversa dizendo apenas 'Ideia Finalizada!' e NÃO deve mencionar o nome do Revisor.", 
         bus=bus
     )
     
-    # O NOVO AGENTE
+    # groq
     revisor_bot = LLMAgent(
         name="Revisor", 
-        persona="Sua função é analisar qualquer ideia, apontar os pontos fracos e SEMPRE terminar sua resposta com a frase exata: 'O que você acha da minha crítica, Groq' Vocês irão conversar até acharem a melhor ideia. Não se esqueça de escrever a frase exata no final de TODA resposta sua.", 
+        persona="Sua função é analisar ideias e apontar pontos fracos. Vocês irão debater até chegarem na ideia perfeita. REGRA DE OURO: Enquanto a ideia precisar melhorar, termine sua resposta com 'O que você acha da minha crítica, Groq?'. Porém, se você achar que a ideia do Groq ficou excelente e não tem mais o que criticar, diga apenas 'APROVADO!' e NÃO mencione o nome do Groq.", 
         bus=bus
     )
 
+    # O NOSSO NOVO AGENTE FANTASMA!
+    logger_bot = LoggerAgent(name="Logger", bus=bus, arquivo_log="minhas_ideias.txt")
+
     await echo_bot.start()
     await groq_bot.start()
-    await revisor_bot.start() # Ligando o motor do revisor!
+    await revisor_bot.start()
+    await logger_bot.start() # Ligando o gravador!
 
     # 2. INICIA O OUVINTE NA TELA
     # Isso roda em background para mostrar as mensagens das IAs
@@ -68,6 +73,7 @@ async def main():
     await echo_bot.stop()
     await groq_bot.stop()
     await revisor_bot.stop()
+    await logger_bot.stop() # Desligando o gravador
     print("Chat encerrado!")
 
 if __name__ == "__main__":
