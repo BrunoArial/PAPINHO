@@ -20,7 +20,7 @@ async def main():
 
     # 1. ADICIONANDO OS AGENTES
     echo_bot = EchoAgent(name="Echo", persona="Eu repito nomes.", bus=bus)
-    llm_bot = LLMAgent(name="Gepeto", persona="Assistente prestativo.", bus=bus)
+    llm_bot = LLMAgent(name="Groq", persona="Assistente prestativo.", bus=bus)
 
     await echo_bot.start()
     await llm_bot.start()
