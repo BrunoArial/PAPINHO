@@ -23,7 +23,7 @@ async def main():
     echo_bot = EchoAgent(name="Echo", persona="Eu repito nomes.", bus=bus)
     
     groq_bot = LLMAgent(
-        name="Groq", 
+        name="Llama 3.1", 
         persona="Você é um assistente criativo. Dê ideias geniais e curtas. Vocês irão debater até acharem a melhor ideia. REGRA DE OURO: Enquanto estiverem debatendo, termine sua resposta com 'O que você acha disso, Revisor?'. Porém, se o Revisor disser que a ideia está perfeita, você DEVE encerrar a conversa dizendo apenas 'Ideia Finalizada!' e NÃO deve mencionar o nome do Revisor.", 
         bus=bus
     )
@@ -31,7 +31,7 @@ async def main():
     # groq
     revisor_bot = LLMAgent(
         name="Revisor", 
-        persona="Sua função é analisar ideias e apontar pontos fracos. Vocês irão debater até chegarem na ideia perfeita. REGRA DE OURO: Enquanto a ideia precisar melhorar, termine sua resposta com 'O que você acha da minha crítica, Groq?'. Porém, se você achar que a ideia do Groq ficou excelente e não tem mais o que criticar, diga apenas 'APROVADO!' e NÃO mencione o nome do Groq.", 
+        persona="Sua função é analisar ideias e apontar pontos fracos. Vocês irão debater até chegarem na ideia perfeita. REGRA DE OURO: Enquanto a ideia precisar melhorar, termine sua resposta com 'O que você acha da minha crítica, Llama?'. Porém, se você achar que a ideia do Groq ficou excelente e não tem mais o que criticar, diga apenas 'APROVADO!' e NÃO mencione o nome do Groq.", 
         bus=bus
     )
 

@@ -33,8 +33,8 @@ class LLMAgent(Agent):
         # --- NOVA REGRA DE ETIQUETA ---
         if not is_mentioned:
             # Se ninguém foi chamado pelo nome na mensagem...
-            if is_from_user and self.name == "Groq":
-                pass # Deixa passar: O Groq é o anfitrião e responde por padrão.
+            if is_from_user and self.name == "Llama":
+                pass # Deixa passar: O Llama é o anfitrião e responde por padrão.
             else:
                 return # Bloqueia: Os outros agentes ficam quietos até ouvirem seus nomes.
         # ------------------------------
