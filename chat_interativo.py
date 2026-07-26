@@ -1,9 +1,9 @@
 import asyncio
 from orchestrator.bus import MessageBus
 from orchestrator.models import Message
-from orchestrator.agents.echo_agent import EchoAgent
 from orchestrator.agents.llm_agent import LLMAgent
 from logger_agent import LoggerAgent
+from orchestrator.agents.gemini_agent import GeminiAgent
 
 async def display_messages(bus: MessageBus):
     """Fica ouvindo o barramento e imprime as mensagens na tela."""
@@ -20,28 +20,36 @@ async def main():
     bus = MessageBus()
 
     # 1. ADICIONANDO OS AGENTES
-    echo_bot = EchoAgent(name="Echo", persona="Eu repito nomes.", bus=bus)
     
-    groq_bot = LLMAgent(
-        name="Llama 3.1", 
-        persona="Você é um assistente criativo. Dê ideias geniais e curtas. Vocês irão debater até acharem a melhor ideia. REGRA DE OURO: Enquanto estiverem debatendo, termine sua resposta com 'O que você acha disso, Revisor?'. Porém, se o Revisor disser que a ideia está perfeita, você DEVE encerrar a conversa dizendo apenas 'Ideia Finalizada!' e NÃO deve mencionar o nome do Revisor.", 
+    llama_bot = LLMAgent(
+        name="Llama", 
+        persona="Você é um assistente criativo de negócios. Dê ideias geniais, diretas e curtas. "
+                "REGRA DE OURO: O seu trabalho é apenas criar e debater. Toda vez que você falar, você DEVE terminar a sua resposta com a pergunta EXATA: 'O que você acha disso, Revisor?'. "
+                "NUNCA encerre a conversa e nunca diga que a ideia foi finalizada. Deixe o fechamento para a equipe de marketing.", 
         bus=bus
     )
     
-    # groq
     revisor_bot = LLMAgent(
         name="Revisor", 
-        persona="Sua função é analisar ideias e apontar pontos fracos. Vocês irão debater até chegarem na ideia perfeita. REGRA DE OURO: Enquanto a ideia precisar melhorar, termine sua resposta com 'O que você acha da minha crítica, Llama?'. Porém, se você achar que a ideia do Groq ficou excelente e não tem mais o que criticar, diga apenas 'APROVADO!' e NÃO mencione o nome do Groq.", 
+        persona="Você é o Revisor. Sua única função é criticar as ideias do Llama para melhorá-las. "
+                "REGRA DE OURO 1: Se a ideia ainda precisar de ajustes, devolva a bola para o criador terminando sua resposta EXATAMENTE com a frase: 'O que você acha da minha crítica, Llama?'. NUNCA faça perguntas a si mesmo (Revisor). "
+                "REGRA DE OURO 2: Quando a ideia estiver excelente e sem falhas, encerre a sua participação dizendo APENAS a frase exata: 'APROVADO! Passo a bola para o Gemini.'", 
+        bus=bus
+    )
+
+    gemini_bot = GeminiAgent(
+        name="Gemini",
+        persona="Você é a inteligência artificial Gemini 1.5 Flash. Você SÓ vai falar quando for chamado. Quando o Revisor aprovar a ideia, sua função é ler a ideia final e criar: 1) Um NOME comercial incrível, 2) Um SLOGAN chiclete, 3) Uma estratégia de vendas de 2 linhas. Termine sua resposta dizendo apenas 'Reunião encerrada!'. NÃO faça perguntas no final.",
         bus=bus
     )
 
     # O NOSSO NOVO AGENTE FANTASMA!
     logger_bot = LoggerAgent(name="Logger", bus=bus, arquivo_log="minhas_ideias.txt")
 
-    await echo_bot.start()
-    await groq_bot.start()
+    await llama_bot.start()
     await revisor_bot.start()
-    await logger_bot.start() # Ligando o gravador!
+    await gemini_bot.start() # Ligando o Gemini
+    await logger_bot.start()
 
     # 2. INICIA O OUVINTE NA TELA
     # Isso roda em background para mostrar as mensagens das IAs
@@ -70,10 +78,10 @@ async def main():
 
     # 4. DESLIGANDO TUDO
     print("\nEncerrando agentes...")
-    await echo_bot.stop()
-    await groq_bot.stop()
+    await llama_bot.stop()
     await revisor_bot.stop()
-    await logger_bot.stop() # Desligando o gravador
+    await gemini_bot.stop() # Desligando o Gemini
+    await logger_bot.stop()
     print("Chat encerrado!")
 
 if __name__ == "__main__":
