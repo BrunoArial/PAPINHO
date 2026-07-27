@@ -1,76 +1,25 @@
-import os
-from dotenv import load_dotenv
-from openai import AsyncOpenAI
 from ..agent import Agent
 from ..models import Message
-
-load_dotenv()
+import asyncio
 
 class LLMAgent(Agent):
     """
-    Agente conectado a um modelo real de IA, agora com memória de curto prazo.
+    Placeholder para um agente que consulta um LLM.
+
+    Para integração real, substitua _call_llm por uma implementação que chame
+    OpenAI/Anthropic/llama.cpp/etc. Insira tratamento de tokens, truncation,
+    retry e monitoramento.
     """
-    
-    def __init__(self, name: str, persona: str, bus):
-        super().__init__(name, persona, bus)
-        self.client = AsyncOpenAI(
-            api_key=os.getenv("GROQ_API_KEY"),
-            base_url="https://api.groq.com/openai/v1"
-        )
-        # 1. A NOVA MEMÓRIA: Uma lista vazia que vai guardar a conversa
-        self.memory = []
 
     async def on_message(self, message: Message):
-        if message.role == "system":
-            return
-            
+        # Ignora mensagens vazias
         if len(message.content.strip()) == 0:
             return
-            
-        is_from_user = message.role == "user"
-        is_mentioned = self.name.lower() in message.content.lower()
-        
-        # --- NOVA REGRA DE ETIQUETA ---
-        if not is_mentioned:
-            # Se ninguém foi chamado pelo nome na mensagem...
-            if is_from_user and self.name == "Llama":
-                pass # Deixa passar: O Llama é o anfitrião e responde por padrão.
-            else:
-                return # Bloqueia: Os outros agentes ficam quietos até ouvirem seus nomes.
-        # ------------------------------
-
         response_text = await self._call_llm(message)
         self.publish(response_text)
 
     async def _call_llm(self, message: Message) -> str:
-        try:
-            # 1. Guarda o que o usuário (ou outro bot) acabou de falar
-            self.memory.append({"role": "user", "content": message.content})
-
-            # --- A NOVA TRAVA DE SEGURANÇA ---
-            # Limita a memória às últimas 10 mensagens (5 perguntas e 5 respostas)
-            max_mensagens = 10
-            if len(self.memory) > max_mensagens:
-                self.memory = self.memory[-max_mensagens:] # O [-10:] corta as mais velhas!
-            # ---------------------------------
-
-            # 2. Monta o pacote: O System Prompt (Persona) + O Histórico (agora limitado)
-            messages_payload = [{"role": "system", "content": self.persona}] + self.memory
-
-            # Envia para a Groq
-            response = await self.client.chat.completions.create(
-                model="llama-3.1-8b-instant",
-                messages=messages_payload,
-                temperature=0.7,
-                max_tokens=1024 # <-- Aumenta o limite aqui
-            )
-            
-            # Extrai a resposta
-            reply_text = response.choices[0].message.content
-
-            # 4. Guarda a resposta do próprio bot
-            self.memory.append({"role": "assistant", "content": reply_text})
-
-            return reply_text
-        except Exception as e:
-            return f"[Erro de comunicação com a IA]: {str(e)}"
+        # Simula latência e retorno do LLM. Em produção, troque por chamada real.
+        await asyncio.sleep(0.5)
+        snippet = message.content[:80].replace('\n', ' ')
+        return f"[LLM response to: {snippet}]"

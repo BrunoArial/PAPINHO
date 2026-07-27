@@ -22,17 +22,41 @@ class GeminiAgent(Agent):
         )
 
     async def on_message(self, message: Message):
+        # Ignora mensagens do sistema ou as próprias mensagens
         if message.role == "system" or message.sender == self.name:
             return
 
+        # Só responde se for chamado pelo nome
         if self.name.lower() in message.content.lower():
             try:
-                texto_envio = f"[{message.sender} disse]: {message.content}"
+                # ---------------------------------------------------------
+                # CORREÇÃO 1: Dando "olhos e ouvidos" para o Gemini
+                # Pegamos as últimas 8 mensagens do barramento para ele ler a ideia
+                # ---------------------------------------------------------
+                historico = self.bus.history()[-8:]
+                
+                texto_envio = "Aqui está o resumo da nossa reunião. Crie o marketing com base nisso:\n\n"
+                
+                for msg in historico:
+                    if msg.role != "system":
+                        texto_envio += f"[{msg.sender}]: {msg.content}\n"
+                
+                # Adiciona o gatilho final
+                texto_envio += f"\nAgora é sua vez, crie o nome e slogan!"
+                
+                # Envia o pacote completo para a IA
                 response = await self.chat.send_message(texto_envio)
                 texto_resposta = response.text
 
+                # Publica a resposta (lembrando: sem o 'await' na frente, pois o bus é síncrono)
                 nova_mensagem = Message(sender=self.name, role="assistant", content=texto_resposta)
                 self.bus.publish(nova_mensagem)
                 
             except Exception as e:
-                print(f"\n[Erro no {self.name} - Gemini]: {e}")
+                # ---------------------------------------------------------
+                # CORREÇÃO 2: Resiliência contra quedas e Rate Limits
+                # Se der erro, ele avisa no chat em vez de travar o programa
+                # ---------------------------------------------------------
+                mensagem_erro = f"Desculpe equipe, tive um problema de conexão com meus servidores: {e}"
+                nova_mensagem_erro = Message(sender=self.name, role="assistant", content=mensagem_erro)
+                self.bus.publish(nova_mensagem_erro)
