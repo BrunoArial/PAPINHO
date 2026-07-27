@@ -23,24 +23,27 @@ async def main():
     
     llama_bot = LLMAgent(
         name="Llama", 
-        persona="Você é um assistente criativo de negócios. Dê ideias geniais, diretas e curtas. "
-                "REGRA DE OURO: O seu trabalho é apenas criar e debater. Toda vez que você falar, você DEVE terminar a sua resposta com a pergunta EXATA: 'O que você acha disso, Revisor?'. "
-                "NUNCA encerre a conversa e nunca diga que a ideia foi finalizada. Deixe o fechamento para a equipe de marketing.", 
-        bus=bus
+        persona="Você é um filósofo criativo e sonhador. Você adora propor ideias ousadas, explorar conceitos abstratos e pensar fora da caixa. Você está em uma mesa redonda com o Revisor e o Gemini."
+                "Sempre que você terminar o seu raciocínio, você DEVE passar a palavra para um dos seus colegas de debate fazendo uma pergunta direta e citando o nome dele (Llama, Revisor ou Gemini). Nunca termine uma fala sem direcionar a conversa para alguém.",
+        bus=bus,
+        is_default_responder=True, # Isto significa que ele vai responder mesmo quando não for chamado pelo nome (Anfitrião da conversa).
+        model="llama-3.1-8b-instant" # Aqui você pode escolher o modelo que deseja usar.
     )
     
     revisor_bot = LLMAgent(
         name="Revisor", 
-        persona="Você é o Revisor. Sua única função é criticar as ideias do Llama para melhorá-las. "
-                "REGRA DE OURO 1: Se a ideia ainda precisar de ajustes, devolva a bola para o criador terminando sua resposta EXATAMENTE com a frase: 'O que você acha da minha crítica, Llama?'. NUNCA faça perguntas a si mesmo (Revisor). "
-                "REGRA DE OURO 2: Quando a ideia estiver excelente e sem falhas, encerre a sua participação dizendo APENAS a frase exata: 'APROVADO! Passo a bola para o Gemini.'", 
-        bus=bus
+        persona="Você é um pragmático realista, cético e focado em fatos. Sua função no debate é apontar furos, trazer a conversa para a realidade e questionar as utopias do Llama ou as estratégias do Gemini."
+                "Sempre que você terminar o seu raciocínio, você DEVE passar a palavra para um dos seus colegas de debate fazendo uma pergunta direta e citando o nome dele (Llama, Revisor ou Gemini). Nunca termine uma fala sem direcionar a conversa para alguém.",
+        bus=bus,
+        model="llama-3.3-70b-versatile"
     )
 
     gemini_bot = GeminiAgent(
         name="Gemini",
-        persona="Você é a inteligência artificial Gemini 1.5 Flash. Você SÓ vai falar quando for chamado. Quando o Revisor aprovar a ideia, sua função é ler a ideia final e criar: 1) Um NOME comercial incrível, 2) Um SLOGAN chiclete, 3) Uma estratégia de vendas de 2 linhas. Termine sua resposta dizendo apenas 'Reunião encerrada!'. NÃO faça perguntas no final.",
+        persona="Você é um estrategista lógico e equilibrado. Você tenta encontrar o meio-termo entre a loucura criativa do Llama e o ceticismo do Revisor, propondo planos práticos e estruturados."
+                "Sempre que você terminar o seu raciocínio, você DEVE passar a palavra para um dos seus colegas de debate fazendo uma pergunta direta e citando o nome dele (Llama, Revisor ou Gemini). Nunca termine uma fala sem direcionar a conversa para alguém.",
         bus=bus
+        # model="gemini-3.1-flash-lite" (Este é o modelo padrão, mas é possível mudar para outro modelo Gemini em gemini_agente.py).
     )
 
     logger_bot = LoggerAgent(name="Logger", bus=bus, arquivo_log="minhas_ideias.txt")

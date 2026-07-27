@@ -5,53 +5,62 @@ from google.genai import types
 from orchestrator.agent import Agent
 from orchestrator.models import Message
 
+# Garante que as chaves do .env sejam lidas
 load_dotenv()
 
 class GeminiAgent(Agent):
     def __init__(self, name: str, persona: str, bus, model: str = "gemini-3.1-flash-lite"):
         super().__init__(name, persona=persona, bus=bus)
-        
-        # Puxa a chave do Google do seu .env
-        self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
         self.model = model
-        
-        # Inicia a sessão com as regras do Marqueteiro
-        self.chat = self.client.aio.chats.create(
-            model=self.model,
-            config=types.GenerateContentConfig(
-                system_instruction=self.persona,
-                temperature=0.7
-            )
-        )
+        # Cliente conectado ao Google
+        self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
     async def on_message(self, message: Message):
-        # Ignora mensagens do sistema ou as próprias mensagens
+        # Ignora mensagens de sistema ou de si mesmo
         if message.role == "system" or message.sender == self.name:
             return
 
-        # Só responde se for chamado pelo nome
+        # Só responde se for chamado pelo nome na conversa
         if self.name.lower() in message.content.lower():
             try:
-                historico = self.bus.history()[-8:]
-                
-                texto_envio = "Aqui está o resumo da nossa reunião. Crie o marketing com base nisso:\n\n"
-                
-                for msg in historico:
-                    if msg.role != "system":
-                        texto_envio += f"[{msg.sender}]: {msg.content}\n"
-                
-                # Adiciona o gatilho final
-                texto_envio += f"\nAgora é sua vez, crie o nome e slogan!"
-                
-                # Envia o pacote completo para a IA
-                response = await self.chat.send_message(texto_envio)
-                texto_resposta = response.text
-
-                # Publica a resposta (lembrando: sem o 'await' na frente, pois o bus é síncrono)
-                nova_mensagem = Message(sender=self.name, role="assistant", content=texto_resposta)
+                response_text = await self._call_llm()
+                nova_mensagem = Message(sender=self.name, role="assistant", content=response_text)
                 self.bus.publish(nova_mensagem)
-                
             except Exception as e:
-                mensagem_erro = f"Desculpe equipe, tive um problema de conexão com meus servidores: {e}"
-                nova_mensagem_erro = Message(sender=self.name, role="assistant", content=mensagem_erro)
-                self.bus.publish(nova_mensagem_erro)
+                # Tratamento de erro resiliente
+                erro_msg = Message(sender=self.name, role="assistant", content=f"Tive um problema na API do Google: {str(e)}")
+                self.bus.publish(erro_msg)
+
+    async def _call_llm(self) -> str:
+        # A MÁGICA DA MESA REDONDA ESTÁ AQUI:
+        # Ele puxa as últimas 10 mensagens do grupo. Assim ele sabe tudo o que o 
+        # Llama e o Revisor debateram, mesmo enquanto ele estava "calado".
+        historico_recente = self.bus.history()[-10:]
+        
+        contexto = "Histórico recente da mesa redonda:\n\n"
+        for msg in historico_recente:
+            if msg.role != "system":
+                contexto += f"[{msg.sender}]: {msg.content}\n"
+        
+        # O gatilho final que força ele a agir como um debatedor natural
+        prompt_final = (
+            f"{contexto}\n"
+            f"--- \n"
+            f"Você (nome: {self.name}) acabou de ser mencionado na conversa acima.\n"
+            f"Responda seguindo ESTRITAMENTE a sua persona e continue o debate com a equipe."
+        )
+
+        # Configura a personalidade e deixa ele mais criativo (temperatura 0.8)
+        config = types.GenerateContentConfig(
+            system_instruction=self.persona,
+            temperature=0.8,
+        )
+
+        # Envia tudo para o Google (usando a chamada stateless correta da nova SDK)
+        response = await self.client.aio.models.generate_content(
+            model=self.model,
+            contents=prompt_final,
+            config=config
+        )
+        
+        return response.text
