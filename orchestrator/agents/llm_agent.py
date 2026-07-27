@@ -1,25 +1,53 @@
-from ..agent import Agent
-from ..models import Message
-import asyncio
+import os
+from openai import AsyncOpenAI
+from dotenv import load_dotenv
+from orchestrator.agent import Agent
+from orchestrator.models import Message
+
+load_dotenv()
 
 class LLMAgent(Agent):
-    """
-    Placeholder para um agente que consulta um LLM.
-
-    Para integração real, substitua _call_llm por uma implementação que chame
-    OpenAI/Anthropic/llama.cpp/etc. Insira tratamento de tokens, truncation,
-    retry e monitoramento.
-    """
+    def __init__(self, name: str, persona: str, bus, is_default_responder: bool = False, model: str = "llama-3.1-8b-instant"):
+        super().__init__(name, persona=persona, bus=bus)
+        self.is_default_responder = is_default_responder
+        self.model = model
+        
+        self.client = AsyncOpenAI(
+            api_key=os.getenv("GROQ_API_KEY"),
+            base_url="https://api.groq.com/openai/v1"
+        )
+        self.memory = []
 
     async def on_message(self, message: Message):
-        # Ignora mensagens vazias
-        if len(message.content.strip()) == 0:
+        if message.role == "system" or message.sender == self.name:
             return
-        response_text = await self._call_llm(message)
-        self.publish(response_text)
+
+        is_addressed_to_me = self.name.lower() in message.content.lower()
+        if not is_addressed_to_me and not (self.is_default_responder and message.sender == "Você"):
+            return
+
+        try:
+            response_text = await self._call_llm(message)
+            nova_mensagem = Message(sender=self.name, role="assistant", content=response_text)
+            self.bus.publish(nova_mensagem)
+        except Exception as e:
+            erro_msg = Message(sender=self.name, role="assistant", content=f"Tive um problema na minha API Groq: {str(e)}")
+            self.bus.publish(erro_msg)
 
     async def _call_llm(self, message: Message) -> str:
-        # Simula latência e retorno do LLM. Em produção, troque por chamada real.
-        await asyncio.sleep(0.5)
-        snippet = message.content[:80].replace('\n', ' ')
-        return f"[LLM response to: {snippet}]"
+        self.memory.append({"role": "user", "content": message.content})
+        if len(self.memory) > 10:
+            self.memory = self.memory[-10:]
+            
+        messages_payload = [{"role": "system", "content": self.persona}] + self.memory
+
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            messages=messages_payload,
+            temperature=0.7,
+            max_tokens=1500,
+        )
+        
+        reply_text = response.choices[0].message.content
+        self.memory.append({"role": "assistant", "content": reply_text})
+        return reply_text

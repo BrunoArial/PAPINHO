@@ -43,7 +43,6 @@ async def main():
         bus=bus
     )
 
-    # O NOSSO NOVO AGENTE FANTASMA!
     logger_bot = LoggerAgent(name="Logger", bus=bus, arquivo_log="minhas_ideias.txt")
 
     await llama_bot.start()

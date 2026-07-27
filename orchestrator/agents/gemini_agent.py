@@ -1,8 +1,11 @@
 import os
+from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from orchestrator.agent import Agent
 from orchestrator.models import Message
+
+load_dotenv()
 
 class GeminiAgent(Agent):
     def __init__(self, name: str, persona: str, bus, model: str = "gemini-3.1-flash-lite"):
@@ -29,10 +32,6 @@ class GeminiAgent(Agent):
         # Só responde se for chamado pelo nome
         if self.name.lower() in message.content.lower():
             try:
-                # ---------------------------------------------------------
-                # CORREÇÃO 1: Dando "olhos e ouvidos" para o Gemini
-                # Pegamos as últimas 8 mensagens do barramento para ele ler a ideia
-                # ---------------------------------------------------------
                 historico = self.bus.history()[-8:]
                 
                 texto_envio = "Aqui está o resumo da nossa reunião. Crie o marketing com base nisso:\n\n"
@@ -53,10 +52,6 @@ class GeminiAgent(Agent):
                 self.bus.publish(nova_mensagem)
                 
             except Exception as e:
-                # ---------------------------------------------------------
-                # CORREÇÃO 2: Resiliência contra quedas e Rate Limits
-                # Se der erro, ele avisa no chat em vez de travar o programa
-                # ---------------------------------------------------------
                 mensagem_erro = f"Desculpe equipe, tive um problema de conexão com meus servidores: {e}"
                 nova_mensagem_erro = Message(sender=self.name, role="assistant", content=mensagem_erro)
                 self.bus.publish(nova_mensagem_erro)
