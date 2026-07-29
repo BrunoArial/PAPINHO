@@ -1,4 +1,5 @@
 import os
+import re
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
 from orchestrator.agent import Agent
@@ -51,3 +52,17 @@ class LLMAgent(Agent):
         reply_text = response.choices[0].message.content
         self.memory.append({"role": "assistant", "content": reply_text})
         return reply_text
+    # ... dentro da classe do seu agente LLM ...
+
+    def processar_resposta(self, texto_bruto):
+        # Remove tudo que estiver entre as tags <think> e </think>
+        texto_limpo = re.sub(r'<think>.*?</think>\n*', '', texto_bruto, flags=re.DOTALL)
+    
+        # Remove espaços em branco extras e retorna
+        return texto_limpo.strip()
+    
+    # Exemplo de fluxo:
+    # resposta_api = self.chamar_llm(prompt)
+    # fala_final = self.processar_resposta(resposta_api)
+    # self.bus.publish("AGENTE_FALOU", fala_final)
+    
