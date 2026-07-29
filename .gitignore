@@ -11,3 +11,6 @@ __pycache__/
 
 # Ignora arquivos de ambiente (se você usar senhas de API no futuro)
 .env
+
+# Ignora arquivos de log
+minhas_ideias.txt

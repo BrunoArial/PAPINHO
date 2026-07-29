@@ -28,7 +28,7 @@ class LLMAgent(Agent):
             return
 
         is_addressed_to_me = self.name.lower() in message.content.lower()
-        if not is_addressed_to_me and not (self.is_default_responder and message.sender == "Você"):
+        if not is_addressed_to_me and not (self.is_default_responder and message.sender == "User"):
             return
 
         try:
@@ -57,10 +57,3 @@ class LLMAgent(Agent):
         reply_text = response.choices[0].message.content
         self.memory.append({"role": "assistant", "content": reply_text})
         return reply_text
-
-    def processar_resposta(self, texto_bruto):
-        # Remove tudo que estiver entre as tags <think> e </think>
-        texto_limpo = re.sub(r'<think>.*?</think>\n*', '', texto_bruto, flags=re.DOTALL)
-    
-        # Remove espaços em branco extras e retorna
-        return texto_limpo.strip()
