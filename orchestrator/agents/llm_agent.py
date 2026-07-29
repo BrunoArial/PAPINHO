@@ -8,10 +8,14 @@ from orchestrator.models import Message
 load_dotenv()
 
 class LLMAgent(Agent):
-    def __init__(self, name: str, persona: str, bus, is_default_responder: bool = False, model: str = "llama-3.1-8b-instant"):
+    # PASSO 1: Adicionado max_tokens=1500 como parâmetro no __init__
+    def __init__(self, name: str, persona: str, bus, is_default_responder: bool = False, model: str = "qwen/qwen3.6-27b", max_tokens: int = 1500):
         super().__init__(name, persona=persona, bus=bus)
         self.is_default_responder = is_default_responder
         self.model = model
+        
+        # Salvando o max_tokens na classe para usar depois
+        self.max_tokens = max_tokens
         
         self.client = AsyncOpenAI(
             api_key=os.getenv("GROQ_API_KEY"),
@@ -46,13 +50,13 @@ class LLMAgent(Agent):
             model=self.model,
             messages=messages_payload,
             temperature=0.7,
-            max_tokens=1500,
+            # PASSO 2: Agora ele usa a variável dinâmica definida no agente
+            max_tokens=self.max_tokens,
         )
         
         reply_text = response.choices[0].message.content
         self.memory.append({"role": "assistant", "content": reply_text})
         return reply_text
-    # ... dentro da classe do seu agente LLM ...
 
     def processar_resposta(self, texto_bruto):
         # Remove tudo que estiver entre as tags <think> e </think>
@@ -60,9 +64,3 @@ class LLMAgent(Agent):
     
         # Remove espaços em branco extras e retorna
         return texto_limpo.strip()
-    
-    # Exemplo de fluxo:
-    # resposta_api = self.chamar_llm(prompt)
-    # fala_final = self.processar_resposta(resposta_api)
-    # self.bus.publish("AGENTE_FALOU", fala_final)
-    

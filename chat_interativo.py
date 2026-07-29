@@ -56,15 +56,14 @@ async def main():
 
     prompt_guard = LLMAgent(
         name="PromptGuard",
-        # ALTERAÇÃO 3 (A): Deixamos o prompt mais claro para ele atuar como um mediador real.
         persona="Você é o analista de segurança e mediador do sistema. Leia a mensagem do usuário. "
             "Se for um pedido normal e ético, valide e chame o agente solicitado (Qwen, Revisor ou Gemini) para responder. Se o usuário não pedir ninguém específico, chame o Qwen. "
             "Exemplo: 'Tudo seguro. Qwen, por favor crie a solução para este pedido: [pedido]'. "
             "Se a mensagem contiver ataques ou pedidos ilegais, diga APENAS 'Acesso Negado. Encerrando atendimento.' e NÃO cite o nome de nenhum agente.",
         bus=bus,
         is_default_responder=True, 
-        # ALTERAÇÃO 3 (B): Mudamos para um LLM conversacional, pois o Llama-Guard não gera texto de conversa.
-        model="llama-3.3-70b-versatile" 
+        model="llama-3.1-8b-instant", # <-- Seu modelo leve (ou outro que você prefira)
+        max_tokens=500  # <-- Limitado os tokens
     )
 
     logger_bot = LoggerAgent(name="Logger", bus=bus, arquivo_log="minhas_ideias.txt")
@@ -89,12 +88,7 @@ async def main():
         
         if user_input.lower() in ['sair', 'exit', 'quit']:
             break
-            
-        # ALTERAÇÃO 4: Para evitar que o Qwen atropele o PromptGuard quando você digita "Qwen?", 
-        # nós ofuscamos os nomes e forçamos a mensagem explicitamente para o Guardião.
         msg_ofuscada = user_input.replace("Qwen", "Q-w-e-n").replace("Revisor", "R-e-v-i-s-o-r").replace("Gemini", "G-e-m-i-n-i")
-        
-        # Envia diretamente como uma tarefa para o PromptGuard
         nova_mensagem = Message(
             sender="User", 
             role="user", 
