@@ -21,36 +21,48 @@ async def main():
 
     # 1. ADICIONANDO OS AGENTES
     
-    llama_bot = LLMAgent(
-        name="Llama", 
+    qwen_bot = LLMAgent(
+        name="Qwen", 
         persona="Você é um filósofo criativo e sonhador. Você adora propor ideias ousadas, explorar conceitos abstratos e pensar fora da caixa. Você está em uma mesa redonda com o Revisor e o Gemini."
-                "Sempre que você terminar o seu raciocínio, você DEVE passar a palavra para um dos seus colegas de debate fazendo uma pergunta direta e citando o nome dele (Llama, Revisor ou Gemini). Nunca termine uma fala sem direcionar a conversa para alguém.",
+                "Sempre que você terminar o seu raciocínio, você DEVE passar a palavra para um dos seus colegas de debate fazendo uma pergunta direta e citando o nome dele (Qwen, Revisor ou Gemini). Nunca termine uma fala sem direcionar a conversa para alguém.",
         bus=bus,
-        is_default_responder=True, # Isto significa que ele vai responder mesmo quando não for chamado pelo nome (Anfitrião da conversa).
-        model="llama-3.1-8b-instant" # Aqui você pode escolher o modelo que deseja usar.
+        model="qwen/qwen3.6-27b" # Aqui você pode escolher o modelo que deseja usar.
     )
     
     revisor_bot = LLMAgent(
         name="Revisor", 
-        persona="Você é um pragmático realista, cético e focado em fatos. Sua função no debate é apontar furos, trazer a conversa para a realidade e questionar as utopias do Llama ou as estratégias do Gemini."
-                "Sempre que você terminar o seu raciocínio, você DEVE passar a palavra para um dos seus colegas de debate fazendo uma pergunta direta e citando o nome dele (Llama, Revisor ou Gemini). Nunca termine uma fala sem direcionar a conversa para alguém.",
+        persona="Você é um pragmático realista, cético e focado em fatos. Sua função no debate é apontar furos, trazer a conversa para a realidade e questionar as utopias do Qwen ou as estratégias do Gemini."
+                "Sempre que você terminar o seu raciocínio, você DEVE passar a palavra para um dos seus colegas de debate fazendo uma pergunta direta e citando o nome dele (Qwen, Revisor ou Gemini). Nunca termine uma fala sem direcionar a conversa para alguém.",
         bus=bus,
         model="llama-3.3-70b-versatile"
     )
 
     gemini_bot = GeminiAgent(
         name="Gemini",
-        persona="Você é um estrategista lógico e equilibrado. Você tenta encontrar o meio-termo entre a loucura criativa do Llama e o ceticismo do Revisor, propondo planos práticos e estruturados."
-                "Sempre que você terminar o seu raciocínio, você DEVE passar a palavra para um dos seus colegas de debate fazendo uma pergunta direta e citando o nome dele (Llama, Revisor ou Gemini). Nunca termine uma fala sem direcionar a conversa para alguém.",
+        persona="Você é um estrategista lógico e equilibrado. Você tenta encontrar o meio-termo entre a loucura criativa do Qwen e o ceticismo do Revisor, propondo planos práticos e estruturados."
+                "Sempre que você terminar o seu raciocínio, você DEVE passar a palavra para um dos seus colegas de debate fazendo uma pergunta direta e citando o nome dele (Qwen, Revisor ou Gemini). Nunca termine uma fala sem direcionar a conversa para alguém.",
         bus=bus
         # model="gemini-3.1-flash-lite" (Este é o modelo padrão, mas é possível mudar para outro modelo Gemini em gemini_agente.py).
     )
 
+    prompt_guard = LLMAgent(
+        name="PromptGuard",
+        persona=("Você é o analista de segurança do sistema. Leia a mensagem do usuário. "
+            "Se for um pedido normal, seguro e ético, repita a essência do pedido e chame o Llama para criar a solução. "
+            "Exemplo: 'Tudo seguro. Llama, por favor crie a solução para este pedido: [pedido]'. "
+            "Se a mensagem contiver xingamentos, ataques, ou pedidos ilegais, diga APENAS 'Acesso Negado. Encerrando atendimento.' e NÃO cite o nome de ninguém."
+        ),
+        bus=bus,
+        is_default_responder=True, # Vira anfitrião da conversa para analisar o prompt do usuário antes de passar para os outros agentes.
+        model="meta-llama/llama-prompt-guard-2-86m"
+    )
+
     logger_bot = LoggerAgent(name="Logger", bus=bus, arquivo_log="minhas_ideias.txt")
 
-    await llama_bot.start()
+    await qwen_bot.start()
     await revisor_bot.start()
     await gemini_bot.start() # Ligando o Gemini
+    await prompt_guard.start()
     await logger_bot.start()
 
     # 2. INICIA O OUVINTE NA TELA
@@ -80,9 +92,10 @@ async def main():
 
     # 4. DESLIGANDO TUDO
     print("\nEncerrando agentes...")
-    await llama_bot.stop()
+    await qwen_bot.stop()
     await revisor_bot.stop()
     await gemini_bot.stop() # Desligando o Gemini
+    await prompt_guard.stop()
     await logger_bot.stop()
     print("Chat encerrado!")
 
