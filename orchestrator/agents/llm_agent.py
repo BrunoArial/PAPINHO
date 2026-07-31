@@ -27,14 +27,39 @@ class LLMAgent(Agent):
         if message.role == "system" or message.sender == self.name:
             return
 
-        is_addressed_to_me = self.name.lower() in message.content.lower()
+        # --- NOVA LÓGICA DE ROTEAMENTO (Fim do Atropelamento) ---
+        # Identifica quem foi o ÚLTIMO agente chamado na mensagem
+        nomes_agentes = ["qwen", "revisor", "gemini"]
+        conteudo_lower = message.content.lower()
+        
+        ultimo_nome = None
+        maior_indice = -1
+        
+        # Procura a posição da última vez que cada nome apareceu
+        for nome in nomes_agentes:
+            indice = conteudo_lower.rfind(nome)
+            if indice > maior_indice:
+                maior_indice = indice
+                ultimo_nome = nome
+                
+        # Ele só se considera chamado se o nome dele for o último da mensagem
+        is_addressed_to_me = (ultimo_nome == self.name.lower())
+        
+        # O PromptGuard (default_responder) continua ouvindo o User direto
         if not is_addressed_to_me and not (self.is_default_responder and message.sender == "User"):
             return
 
         try:
             response_text = await self._call_llm(message)
-            nova_mensagem = Message(sender=self.name, role="assistant", content=response_text)
-            self.bus.publish(nova_mensagem)
+            
+            # Limpa o texto AQUI, antes de publicar para os colegas lerem
+            texto_limpo = re.sub(r"<think>.*?(?:</think>|$)\n*", "", response_text, flags=re.DOTALL).strip()
+            
+            # Só publica e passa a palavra se sobrar texto real
+            if texto_limpo:
+                nova_mensagem = Message(sender=self.name, role="assistant", content=texto_limpo)
+                self.bus.publish(nova_mensagem)
+                
         except Exception as e:
             erro_msg = Message(sender=self.name, role="assistant", content=f"Tive um problema na minha API Groq: {str(e)}")
             self.bus.publish(erro_msg)
