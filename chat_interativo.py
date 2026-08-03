@@ -17,6 +17,7 @@ independente escutando o MessageBus), então o debate entre eles não para.
 """
 
 import asyncio
+import datetime
 import re
 
 from orchestrator.agent import Agent
@@ -217,13 +218,17 @@ def criar_agentes(bus: MessageBus) -> dict[str, Agent]:
 # --------------------------------------------------------------------------
 async def display_messages(bus: MessageBus) -> None:
     """Escuta o barramento e imprime as falas dos agentes (ignora System e o próprio User)."""
+    # Vai estar dentro de algum loop assíncrono que escuta o barramento:
     async for msg in bus.subscribe():
-        if msg.role == "system" or msg.sender == "User":
+        
+        # 1. ADICIONE ESTA TRAVA AQUI:
+        # Se for só um pedaço do streaming ou o aviso de "pensando", pula e não escreve nada.
+        if msg.metadata and msg.metadata.get("type") in ["agent_thinking", "agent_stream"]:
             continue
-
-        conteudo = _remover_pensamento_interno(msg.content)
-        if conteudo:
-            print(f"\n[{msg.sender}]: {conteudo}")
+            
+        # 2. O seu código original de salvar o arquivo continua aqui embaixo normal:
+        with open("minhas_ideias.txt", "a", encoding="utf-8") as arquivo:
+            arquivo.write(f"[{datetime.now()}] {msg.sender}: {msg.content}\n")
 
 
 def _exibir_boas_vindas() -> None:
