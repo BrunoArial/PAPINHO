@@ -14,3 +14,6 @@ __pycache__/
 
 # Ignora arquivos de log
 minhas_ideias.txt
+
+# Claude Code (Local Settings)
+.claude/
