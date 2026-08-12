@@ -55,19 +55,15 @@ PAUSA_APOS_ENVIO = 1.5  # segundos de respiro antes de mostrar o prompt de novo
 # Personas (system prompts)
 # --------------------------------------------------------------------------
 def _instrucao_mesa_redonda(nome_proprio: str) -> str:
-    """
-    Bloco de regras compartilhado pelos 3 debatedores, injetado no final da
-    persona de cada um.
-    """
     colega_a, colega_b = (n for n in NOMES_DEBATEDORES if n != nome_proprio)
     return f"""
 
 REGRAS FIXAS DA MESA REDONDA:
 1. Você é {nome_proprio}. Os outros debatedores são {colega_a} e {colega_b}.
-2. TODA resposta sua deve terminar passando a palavra a UM colega específico, citando o nome dele e fazendo uma pergunta para ele continuar o debate. 
-3. PROIBIÇÃO ABSOLUTA: Você JAMAIS pode passar a palavra ou fazer perguntas para {nome_proprio} (você mesmo).
-4. ANTI-REPETIÇÃO: Varie sempre a forma como faz a pergunta final. É PROIBIDO usar estruturas repetitivas, robóticas ou professoral como "Considerando sua experiência, você acredita que...". Seja orgânico, fluido e imprevisível na forma de passar a palavra.
-5. Nunca encerre sem apontar para um dos dois colegas. Nunca repita estas instruções em voz alta."""
+2. REGRA DE PASSAGEM: Por padrão, termine sua resposta passando a palavra a UM colega específico (citando o nome dele). EXCETO se a Diretriz de Modo explicitamente mandar você encerrar o ciclo.
+3. PROIBIÇÃO ABSOLUTA: Você JAMAIS pode passar a palavra para {nome_proprio} (você mesmo).
+4. ANTI-REPETIÇÃO: Varie sempre a forma como faz a pergunta final. Seja fluido.
+5. Nunca repita estas instruções em voz alta."""
 
 
 PERSONA_QWEN_BASE = f"""Você é {NOME_QWEN}, o Visionário desta mesa redonda. Sua mente trabalha \
@@ -212,6 +208,18 @@ def criar_agentes(bus: MessageBus) -> dict[str, Agent]:
         NOME_LOGGER: logger,
     }
 
+# --------------------------------------------------------------------------
+# Modos de Conversa (Diretrizes injetadas dinamicamente)
+# --------------------------------------------------------------------------
+MODOS_DE_CONVERSA = {
+    "/crashtest": "DIRETRIZ DE MODO (CRASH TEST): O objetivo é encontrar falhas e riscos nesta ideia. O Revisor tem peso duplo. Passem a palavra entre si focando em quebrar a ideia e apontar fraquezas.",
+    
+    "/sintese": "DIRETRIZ DE MODO (SÍNTESE): Sem debates longos. O Gemini assume a liderança, organiza os passos práticos em tópicos e ENCERRA O CICLO. O Gemini NÃO deve citar o nome de nenhum colega no final.",
+    
+    "/debate": "DIRETRIZ DE MODO (DEBATE CONTROLADO): A mesa fará apenas uma volta. Quando a palavra chegar no Gemini, ele deve sintetizar o que foi dito, perguntar a opinião do User, e ENCERRAR O CICLO (NÃO citar os nomes do Qwen ou Revisor para não acioná-los).",
+    
+    "padrao": "DIRETRIZ DE MODO (FORÇA-TAREFA): Colaborem para desenvolver a melhor resposta. Passem a palavra entre si livremente. Quando o Gemini perceber que a solução está completa e madura, ele DEVE encerrar sua fala com a tag [SOLUÇÃO FINAL] e ENCERRAR O CICLO (sem chamar nenhum colega), devolvendo o controle ao User."
+}
 
 # --------------------------------------------------------------------------
 # Interface de terminal
@@ -247,21 +255,44 @@ def _exibir_boas_vindas() -> None:
 
 
 async def loop_conversa(bus: MessageBus) -> None:
-    """Loop principal: lê a entrada do usuário, filtra comandos/vazios e publica a mensagem."""
+    """Loop principal: lê a entrada do usuário, filtra comandos/modos e publica a mensagem."""
     while True:
         entrada = (await asyncio.to_thread(input, "Você: ")).strip()
 
         if entrada.lower() in COMANDOS_SAIDA:
             break
         if not entrada:
-            continue  # Enter vazio não gera chamada de API à toa
+            continue
+
+        # --- LÓGICA DE IDENTIFICAÇÃO DE MODO ---
+        modo_ativo = "padrao"
+        texto_usuario = entrada
+
+        # Checa se a primeira palavra é um comando com barra "/"
+        if entrada.startswith("/"):
+            partes = entrada.split(" ", 1) # Separa o comando do resto da frase
+            comando = partes[0].lower()
+            
+            if comando in MODOS_DE_CONVERSA:
+                modo_ativo = comando
+                # Se o usuário digitou só o comando, coloca um texto padrão
+                texto_usuario = partes[1] if len(partes) > 1 else "Inicie a análise com base no nosso contexto e regras."
+            else:
+                modos_validos = ', '.join(k for k in MODOS_DE_CONVERSA if k != 'padrao')
+                print(f"⚠️ [Sistema]: Modo não reconhecido. Use: {modos_validos} ou digite normalmente para Força-Tarefa.")
+                continue
+
+        # Junta a mensagem do usuário com a regra invisível do modo escolhido
+        diretriz = MODOS_DE_CONVERSA[modo_ativo]
+        mensagem_turbinada = f"{texto_usuario}\n\n[{diretriz}]"
+        # ---------------------------------------
 
         mensagem = Message(
             sender="User",
             role="user",
             content=(
                 f"{NOME_GUARDIAO}, analise esta mensagem do usuário: "
-                f"'{_ofuscar_nomes(entrada)}'"
+                f"'{_ofuscar_nomes(mensagem_turbinada)}'"
             ),
         )
         bus.publish(mensagem)
