@@ -14,22 +14,58 @@ class GeminiAgent(Agent):
         self.model = model
         # Cliente conectado ao Google
         self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        # Formas alternativas do nome pelas quais este agente pode ser acordado.
+        # Inclui o nome limpo e a versão hifenizada usada por _ofuscar_nomes() em
+        # chat_interativo.py (cada letra separada por hífen), porque a delegação
+        # do PromptGuard chega ao bus já ofuscada para que o match por substring
+        # no caminho de User não burle o guardião. Se o Gemini não reconhecesse
+        # a forma hifenizada, nunca acordaria quando roteado diretamente.
+        self._aliases = [
+            self.name.lower(),
+            "-".join(self.name.lower()),  # "gemini" -> "g-e-m-i-n-i"
+        ]
 
     async def on_message(self, message: Message):
         # Ignora mensagens de sistema ou de si mesmo
         if message.role == "system" or message.sender == self.name:
             return
 
-        # Só responde se for chamado pelo nome na conversa
-        if self.name.lower() in message.content.lower():
+        # Só responde se for chamado pelo nome (limpo OU hifenizado) na conversa
+        conteudo_lower = message.content.lower()
+        chamado = any(alias in conteudo_lower for alias in self._aliases)
+
+        # DEBUG: sempre printa o que o Gemini viu, mesmo que desista.
+        import sys
+        print(
+            f"\n[DEBUG-GEMINI] Gemini acordou. sender_original={message.sender!r} "
+            f"chamado={chamado} content_preview={message.content[:80]!r}",
+            file=sys.stderr, flush=True,
+        )
+
+        if not chamado:
+            return
+        # Tenta pegar o bastão. Se outro agente já pegou, ele fica esperando aqui.
+        async with self.bus.bastao:
+       
+            # Quando finalmente pegar o bastão, ele confere a mesa.
+            # Se a última mensagem do histórico NÃO for mais a que o acordou,
+            # significa que o colega (que pegou o bastão antes) já falou e a conversa andou.
+            if self.bus.history()[-1] is not message:
+                # Assunto já andou. Vai ficar quieto.
+                return 
+
             try:
                 response_text = await self._call_llm()
                 nova_mensagem = Message(sender=self.name, role="assistant", content=response_text)
                 self.bus.publish(nova_mensagem)
             except Exception as e:
-                # Tratamento de erro resiliente
-                erro_msg = Message(sender=self.name, role="assistant", content=f"Tive um problema na API do Google: {str(e)}")
-                self.bus.publish(erro_msg)
+                # Tratamento de erro resiliente com passagem de bastão!
+                erro_msg = Message(
+                    sender=self.name, 
+                    role="assistant", 
+                    content=f"Tive um problema na API do Google: {str(e)}\n\nQwen, minha conexão caiu. Assuma a análise do seu ponto de vista por enquanto."
+                )
+                self.bus.publish(erro_msg) 
 
     async def _call_llm(self) -> str:
         # A MÁGICA DA MESA REDONDA ESTÁ AQUI:
