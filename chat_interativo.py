@@ -21,6 +21,16 @@ import asyncio
 from datetime import datetime
 import re
 
+import rich
+from rich.console import Console
+from rich.markdown import Markdown
+from rich.panel import Panel
+from rich.panel import Panel
+from rich.align import Align
+from rich.text import Text
+console = Console()
+
+
 from orchestrator.agent import Agent
 from orchestrator.bus import MessageBus
 from orchestrator.models import Message
@@ -52,7 +62,34 @@ NOMES_DEBATEDORES = [NOME_QWEN, NOME_REVISOR, NOME_GEMINI]
 COMANDOS_SAIDA = {"sair", "exit", "quit"}
 PAUSA_APOS_ENVIO = 1.5  # segundos de respiro antes de mostrar o prompt de novo
 
+CORES_AGENTES = {
+    NOME_QWEN: "cyan",
+    NOME_REVISOR: "red",
+    NOME_GEMINI: "blue",
+    "User": "green",
+    "Sistema": "yellow"
+}
 
+def exibir_mensagem_visual(remetente, conteudo):
+    # Pega a cor correspondente ou usa branco como padrão
+    cor = CORES_AGENTES.get(remetente, "white")
+    
+    if remetente == "User":
+        # Para o usuário, exibimos um texto limpo e direto
+        console.print(f"\n[bold {cor}]Você:[/bold {cor}] {conteudo}\n")
+    elif "ALERTA DE SISTEMA" in conteudo:
+        # Pinta os erros interceptados de amarelo discreto para não assustar
+        console.print(f"[dim yellow]{conteudo}[/dim yellow]")
+    else:
+        # Para os agentes, renderiza o Markdown (tabelas, negrito, código) e joga no painel
+        md = Markdown(conteudo)
+        painel = Panel(
+            md, 
+            title=f"[bold {cor}] {remetente} [/bold {cor}]", 
+            border_style=cor, 
+            padding=(1, 2) # Dá um respiro nas bordas
+        )
+        console.print(painel)
 # --------------------------------------------------------------------------
 # Personas (system prompts)
 # --------------------------------------------------------------------------
@@ -268,29 +305,26 @@ MODOS_DE_CONVERSA = {
 
 async def animacao_carregamento(bus: MessageBus) -> None:
     """Exibe pontinhos de carregamento enquanto os agentes trabalham."""
-    animacao = itertools.cycle(['.  ', '.. ', '...', '   '])
     tempo_ocioso = 0
-    sys.stdout.write('\033[?25l') # Esconde o cursor do mouse
     
     try:
-        while True:
-            # Se alguém estiver segurando o bastão, a animação roda
-            if bus.bastao.locked():
-                tempo_ocioso = 0 
-                sys.stdout.write(f'\r\033[90mAgentes pensando{next(animacao)}\033[0m\033[K')
-                sys.stdout.flush()
-            else:
-                # Se a mesa estiver livre, começamos a contar o tempo
-                tempo_ocioso += 0.2
-                if tempo_ocioso > 2.0: 
-                    # 2 segundos de silêncio absoluto = o turno da mesa acabou!
-                    break
-            
-            await asyncio.sleep(0.2)
+        # O "with console.status" abraça o seu loop de espera.
+        with console.status("[bold yellow]A mesa redonda está debatendo...", spinner="dots"):
+            while True:
+                # Se alguém estiver segurando o bastão, a animação roda
+                if bus.bastao.locked():
+                    tempo_ocioso = 0 
+                else:
+                    # Se a mesa estiver livre, começamos a contar o tempo
+                    tempo_ocioso += 0.2
+                    if tempo_ocioso > 2.0: 
+                        # 2 segundos de silêncio absoluto = o turno da mesa acabou!
+                        break
+                
+                await asyncio.sleep(0.2)
     finally:
-        sys.stdout.write('\r\033[K') # Limpa a linha dos pontinhos
-        sys.stdout.write('\033[?25h') # Devolve o cursor
-        bus.turno_encerrado.set() # Avisa o loop principal que o User pode falar
+        # O "with" termina, o Rich apaga a animação da tela sozinho, e nós liberamos o turno!
+        bus.turno_encerrado.set()
 
 async def display_messages(bus: MessageBus) -> None:
     """Escuta o barramento e imprime as falas dos agentes (ignora System e o próprio User)."""
@@ -308,17 +342,63 @@ async def display_messages(bus: MessageBus) -> None:
         
         with open(ARQUIVO_LOG, "a", encoding="utf-8") as arquivo:
             arquivo.write(f"[{datetime.now()}] {msg.sender}: {conteudo_limpo}\n")
-            
-        sys.stdout.write('\r\033[K') 
-        print(f"\n {msg.sender.upper()}: {conteudo_limpo}\n")
 
+        exibir_mensagem_visual(msg.sender, conteudo_limpo)
+
+
+from rich.panel import Panel
+from rich.align import Align
+from rich.text import Text
 
 def _exibir_boas_vindas() -> None:
-    linha = "=" * 50
-    print(linha)
-    print("Chat iniciado! Digite sua mensagem e aperte Enter.")
-    print(f"Para sair, digite: {' / '.join(sorted(COMANDOS_SAIDA))}.")
-    print(f"{linha}\n")
+    """Exibe um cabeçalho minimalista com cara de ferramenta de IA moderna."""
+    console.clear() # Limpa a tela ao iniciar para dar um visual limpo de app
+    
+    # Monta um painel de boas-vindas sofisticado, sem poluição visual
+    banner_texto = (
+        "[bold cyan]PAPINHO[/bold cyan] [dim]— Multi-Agent Orchestrator[/dim]\n"
+        "[dim]Mesa Redonda: Qwen (Explorador) | Gpt (Auditor) | Gemini (Estrategista)[/dim]\n\n"
+        "[italic green]Digite sua ideia ou problema técnico. Use /ajuda ou comandos como /crashtest, /codigo.[/italic green]\n"
+        f"[dim]Comandos de saída: {', '.join(sorted(COMANDOS_SAIDA))}[/dim]"
+    )
+    
+    painel_boas_vindas = Panel(
+        banner_texto,
+        border_style="cyan",
+        title="[bold white] SYS.INIT [/bold white]",
+        title_align="left",
+        padding=(1, 2)
+    )
+    console.print(painel_boas_vindas)
+
+def _exibir_ajuda() -> None:
+    """Exibe o painel interativo com todos os comandos e modos disponíveis."""
+    ajuda_texto = (
+        "[bold cyan]Comandos Disponíveis no PAPINHO:[/bold cyan]\n\n"
+        "[bold yellow]Modos de Conversa (digite o comando seguido do seu tema):[/bold yellow]\n"
+        "  [cyan]/crashtest[/cyan]  - Encontra falhas e riscos profundos (Gpt com peso duplo).\n"
+        "  [cyan]/sintese[/cyan]     - Gemini assume a liderança e fecha o ciclo rapidamente.\n"
+        "  [cyan]/debate[/cyan]     - Debate estruturado de uma única volta.\n"
+        "  [cyan]/livre[/cyan]      - Exploração solta sem formato forçado.\n"
+        "  [cyan]/curto[/cyan]      - Resposta expressa em 2-3 frases.\n"
+        "  [cyan]/codigo[/cyan]     - Foco em arquitetura de código e blocos técnicos.\n"
+        "  [cyan]/explica[/cyan]    - Modo pedagógico passo a passo.\n"
+        "  [cyan]/revisa[/cyan]     - Foco em auditoria de estilo e estrutura (Gpt lidera).\n"
+        "  [cyan]/brainstorm[/cyan] - Ideação pura sem críticas bloqueantes.\n"
+        "  [cyan]/decide[/cyan]     - Apoio estruturado a escolhas técnicas.\n\n"
+        "[bold yellow]Comandos do Sistema:[/bold yellow]\n"
+        "  [cyan]/ajuda ou /help[/cyan] - Exibe este manual.\n"
+        "  [cyan]sair / exit / quit[/cyan] - Encerra a malha de agentes com segurança."
+    )
+    
+    painel_ajuda = Panel(
+        ajuda_texto,
+        border_style="yellow",
+        title="[bold white] PAPINHO // MANUAL DE COMANDOS [/bold white]",
+        title_align="left",
+        padding=(1, 2)
+    )
+    console.print(painel_ajuda)
 
 
 async def loop_conversa(bus: MessageBus) -> None:
@@ -326,7 +406,7 @@ async def loop_conversa(bus: MessageBus) -> None:
     while True:
         await bus.turno_encerrado.wait()
         
-        entrada = (await asyncio.to_thread(input, "Você: ")).strip()
+        entrada = (await asyncio.to_thread(console.input, "\n[bold green]Você:[/bold green] ")).strip()
 
         if entrada.lower() in COMANDOS_SAIDA:
             break
@@ -339,7 +419,10 @@ async def loop_conversa(bus: MessageBus) -> None:
         if entrada.startswith("/"):
             partes = entrada.split(" ", 1)
             comando = partes[0].lower()
-            
+
+            if comando in ("/ajuda", "/help"):
+                _exibir_ajuda()
+                continue
             if comando in MODOS_DE_CONVERSA:
                 modo_ativo = comando
                 texto_usuario = partes[1] if len(partes) > 1 else "Inicie a análise com base no nosso contexto e regras."
@@ -388,11 +471,11 @@ async def main() -> None:
     try:
         await loop_conversa(bus)
     except KeyboardInterrupt:
-        print("\nInterrompido pelo usuário (Ctrl+C).")
+        console.print("\n[yellow]⚠️ Interrompido pelo usuário (Ctrl+C).[/yellow]")
     finally:
-        print("\nEncerrando agentes...")
+        console.print("\n[dim red]Encerrando malha de agentes e liberando recursos...[/dim red]")
         await asyncio.gather(*(agente.stop() for agente in agentes.values()))
-        print("Chat encerrado!")
+        console.print("[bold green]✓ Chat encerrado com sucesso.[/bold green]\n")
 
 
 if __name__ == "__main__":
