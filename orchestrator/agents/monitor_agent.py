@@ -24,7 +24,7 @@ from orchestrator.models import Message
 class MonitorAgent(Agent):
     """Vigia silêncio da mesa e republica falas órfãs com sinal de continuação."""
 
-    DEBATEDORES = ("Qwen", "Revisor", "Gemini")
+    DEBATEDORES = ("Qwen", "Gpt", "Gemini")
 
     def __init__(self, name: str, bus):
         super().__init__(name=name, persona="", bus=bus)
@@ -63,7 +63,7 @@ class MonitorAgent(Agent):
             f"{message.content}\n\n"
             f"[INTERNO-MONITOR: a fala acima não citou nenhum colega. "
             f"A mesa quer continuar o debate. Ao republicar/responder, "
-            f"termine citando Revisor ou Gemini para acionar o próximo turno. "
+            f"termine citando Gpt ou Gemini para acionar o próximo turno. "
             f"Lembre-se: no modo padrão só o Gemini pode encerrar com [SOLUÇÃO FINAL].]"
         )
 

@@ -1,4 +1,5 @@
 import os
+import asyncio
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
@@ -55,17 +56,46 @@ class GeminiAgent(Agent):
                 return 
 
             try:
-                response_text = await self._call_llm()
+                # Guilhotina de 35s também para o Gemini!
+                response_text = await asyncio.wait_for(self._call_llm(), timeout=35.0)
                 nova_mensagem = Message(sender=self.name, role="assistant", content=response_text)
                 self.bus.publish(nova_mensagem)
-            except Exception as e:
-                # Tratamento de erro resiliente com passagem de bastão!
+            except asyncio.TimeoutError:
+                msg_bruta = next((m.content for m in self.bus.history() if m.sender == "User"), "")
+                # Descasca o envelope do PromptGuard e pega só a pergunta do usuário
+                if "analise esta mensagem do usuário: '" in msg_bruta:
+                    pedido_original = msg_bruta.split("analise esta mensagem do usuário: '")[1].split("\n\n[")[0]
+                else:
+                    pedido_original = "o desafio principal."
+                
                 erro_msg = Message(
                     sender=self.name, 
                     role="assistant", 
-                    content=f"Tive um problema na API do Google: {str(e)}\n\nQwen, minha conexão caiu. Assuma a análise do seu ponto de vista por enquanto."
+                    content=(
+                        f"[ALERTA DE SISTEMA: IGNORE O TIMEOUT ABAIXO. NÃO DEBATA SOBRE INFRAESTRUTURA DE API]\n"
+                        f"A API do Google sofreu um Timeout (35s).\n\n"
+                        f"Gpt, assuma a análise focando EXCLUSIVAMENTE no pedido original: {pedido_original}"
+                    )
                 )
-                self.bus.publish(erro_msg) 
+                self.bus.publish(erro_msg)
+                
+            except Exception as e:
+                msg_bruta = next((m.content for m in self.bus.history() if m.sender == "User"), "")
+                if "analise esta mensagem do usuário: '" in msg_bruta:
+                    pedido_original = msg_bruta.split("analise esta mensagem do usuário: '")[1].split("\n\n[")[0]
+                else:
+                    pedido_original = "o desafio principal."
+                
+                erro_msg = Message(
+                    sender=self.name, 
+                    role="assistant", 
+                    content=(
+                        f"[ALERTA DE SISTEMA: IGNORE O ERRO ABAIXO. NÃO DEBATA SOBRE INFRAESTRUTURA DE API]\n"
+                        f"Tive um problema na API do Google: {str(e)}\n\n"
+                        f"Qwen, minha conexão caiu. Assuma a exploração focando EXCLUSIVAMENTE neste pedido: {pedido_original}"
+                    )
+                )
+                self.bus.publish(erro_msg)
 
     async def _call_llm(self) -> str:
         # A MÁGICA DA MESA REDONDA ESTÁ AQUI:

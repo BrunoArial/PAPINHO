@@ -9,7 +9,6 @@ from orchestrator.models import Message
 load_dotenv()
 
 class LLMAgent(Agent):
-    # PASSO 1: Adicionado max_tokens=1500 como parâmetro no __init__
     def __init__(self, name: str, persona: str, bus, is_default_responder: bool = False, model: str = "qwen/qwen3.6-27b", max_tokens: int = 1500):
         super().__init__(name, persona=persona, bus=bus)
         self.is_default_responder = is_default_responder
@@ -21,7 +20,7 @@ class LLMAgent(Agent):
         self.client = AsyncOpenAI(
             api_key=os.getenv("GROQ_API_KEY"),
             base_url="https://api.groq.com/openai/v1",
-            timeout=30.0
+            timeout=55.0
         )
         self.memory = []
 
@@ -33,7 +32,7 @@ class LLMAgent(Agent):
         # Arranca asteriscos (**), vírgulas e qualquer pontuação que possa cegar o rfind
         texto_limpo_para_roteamento = re.sub(r'[^a-zA-Z0-9\s]', '', message.content.lower())
 
-        nomes_agentes = ["qwen", "revisor", "gemini"]
+        nomes_agentes = ["qwen", "gpt", "gemini"]
         ultimo_nome = None
         maior_indice = -1
 
@@ -91,33 +90,39 @@ class LLMAgent(Agent):
                 self.bus.publish(nova_mensagem)
 
             except asyncio.TimeoutError:
-                # ESTE é o erro que estava sumindo sem traceback: a animação
-                # antiga matava o turno antes da hora, e sem wait_for este
-                # caminho nem era alcançado. Agora o Revisor cai aqui e
-                # passa o bastão pro Gemini, que fecha a mesa.
+                msg_bruta = next((m.content for m in self.bus.history() if m.sender == "User"), "")
+                if "analise esta mensagem do usuário: '" in msg_bruta:
+                    pedido_original = msg_bruta.split("analise esta mensagem do usuário: '")[1].split("\n\n[")[0]
+                else:
+                    pedido_original = "o desafio principal."
+                
                 erro_msg = Message(
                     sender=self.name,
                     role="assistant",
                     content=(
-                        f"⏱️ Timeout (35s) na minha API Groq. "
-                        f"Gemini, pegue o bastão e continue o debate sem mim "
-                        f"— sintetize e feche com [SOLUÇÃO FINAL]."
+                        f"[ALERTA DE SISTEMA: IGNORE O TIMEOUT ABAIXO. NÃO DEBATA SOBRE INFRAESTRUTURA DE API]\n"
+                        f"⏱️ Timeout (60s) na minha API Groq.\n\n"
+                        f"Gemini, pegue o bastão e continue o debate sem mim — sintetize e feche com [SOLUÇÃO FINAL] "
+                        f"baseado EXCLUSIVAMENTE no pedido original: {pedido_original}"
                     ),
                 )
                 self.bus.publish(erro_msg)
+                
             except BaseException as e:
-                # BaseException pega TUDO, até Timeouts severos e erros de vazia.
-                # SEMPRE aponta o fallback pro Gemini, que é quem fecha o
-                # ciclo com [SOLUÇÃO FINAL]. Antes, o fallback ia pro Qwen,
-                # e se o Qwen também falhasse a mesa ficava órfã.
+                msg_bruta = next((m.content for m in self.bus.history() if m.sender == "User"), "")
+                if "analise esta mensagem do usuário: '" in msg_bruta:
+                    pedido_original = msg_bruta.split("analise esta mensagem do usuário: '")[1].split("\n\n[")[0]
+                else:
+                    pedido_original = "o desafio principal."
+                
                 erro_msg = Message(
                     sender=self.name,
                     role="assistant",
                     content=(
+                        f"[ALERTA DE SISTEMA: IGNORE O ERRO ABAIXO. NÃO DEBATA SOBRE INFRAESTRUTURA DE API]\n"
                         f"❌ Falha na minha API Groq: {type(e).__name__}: {e}\n\n"
-                        f"Gemini, minha API falhou ou me deixou no vácuo. "
-                        f"Pegue o bastão, sintetize o debate e feche com "
-                        f"[SOLUÇÃO FINAL]."
+                        f"Gemini, minha API falhou. Pegue o bastão, sintetize o debate e feche com [SOLUÇÃO FINAL] "
+                        f"baseado EXCLUSIVAMENTE no pedido original: {pedido_original}"
                     ),
                 )
                 self.bus.publish(erro_msg)
