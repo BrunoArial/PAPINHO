@@ -35,12 +35,12 @@ class GeminiAgent(Agent):
         chamado = any(alias in conteudo_lower for alias in self._aliases)
 
         # DEBUG: sempre printa o que o Gemini viu, mesmo que desista.
-        import sys
-        print(
-            f"\n[DEBUG-GEMINI] Gemini acordou. sender_original={message.sender!r} "
-            f"chamado={chamado} content_preview={message.content[:80]!r}",
-            file=sys.stderr, flush=True,
-        )
+        # import sys
+        # print(
+        #    f"\n[DEBUG-GEMINI] Gemini acordou. sender_original={message.sender!r} "
+        #    f"chamado={chamado} content_preview={message.content[:80]!r}",
+        #    file=sys.stderr, flush=True,
+        #)
 
         if not chamado:
             return

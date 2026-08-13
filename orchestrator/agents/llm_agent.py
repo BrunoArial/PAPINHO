@@ -47,12 +47,12 @@ class LLMAgent(Agent):
 
         # DEBUG: sempre printa o que o agente viu, mesmo que desista.
         # Sem isso, "Revisor não respondeu" vira "vai ver o log".
-        import sys
-        print(
-            f"\n[DEBUG-LLM] {self.name} acordou. sender_original={message.sender!r} "
-            f"ultimo_nome_detectado={ultimo_nome!r} addressed_to_me={is_addressed_to_me}",
-            file=sys.stderr, flush=True,
-        )
+        # import sys
+        # print(
+        #    f"\n[DEBUG-LLM] {self.name} acordou. sender_original={message.sender!r} "
+        #    f"ultimo_nome_detectado={ultimo_nome!r} addressed_to_me={is_addressed_to_me}",
+        #    file=sys.stderr, flush=True,
+        #)
 
         if not is_addressed_to_me and not (self.is_default_responder and message.sender == "User"):
             return
