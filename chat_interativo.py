@@ -35,13 +35,13 @@ from logger_agent import LoggerAgent
 # que renomear um agente ou trocar de modelo seja uma mudança em um só lugar.
 # --------------------------------------------------------------------------
 NOME_QWEN = "Qwen"
-NOME_REVISOR = "Revisor"
+NOME_REVISOR = "Gpt"
 NOME_GEMINI = "Gemini"
 NOME_GUARDIAO = "PromptGuard"
 NOME_LOGGER = "Logger"
 
 MODELO_QWEN = "qwen/qwen3.6-27b"
-MODELO_REVISOR = "llama-3.3-70b-versatile"
+MODELO_REVISOR = "openai/gpt-oss-120b"
 MODELO_GEMINI = "gemini-3.1-flash-lite"
 MODELO_GUARDIAO = "meta-llama/llama-prompt-guard-2-22m"
 
