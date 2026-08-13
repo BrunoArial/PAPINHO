@@ -14,10 +14,15 @@ class Agent(ABC):
     - on_message(): hook a ser sobrescrito pelos agentes concretos para reagir a mensagens.
     """
 
-    def __init__(self, name: str, persona: str, bus: MessageBus):
+    def __init__(self, name: str, persona: str, bus: MessageBus, is_default_responder: bool = False):
         self.name = name
         self.persona = persona
         self.bus = bus
+        # Flag de roteamento: quando True, o agente ouve mensagens do User
+        # mesmo que seu nome não seja o último mencionado. Usado pelo
+        # PromptGuard (único default_responder hoje). Viver no Agent base
+        # evita que cada subclasse redefina o atributo.
+        self.is_default_responder = is_default_responder
         self._task: Optional[asyncio.Task] = None
         self._running = False
 
