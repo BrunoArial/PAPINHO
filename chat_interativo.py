@@ -1,33 +1,17 @@
 """
 chat_interativo.py
 
-Ponto de entrada do PAPINHO: um chat de terminal onde o usuário conversa com
-uma "mesa redonda" de agentes de IA (Qwen, GptOss e Gemini), mediada por um
-agente de segurança/roteador (PromptGuard) e registrada em log por um
-LoggerAgent silencioso.
-
-Fluxo de uma mensagem:
-    User -> PromptGuard (valida e roteia) -> agente escolhido -> os agentes
-    passam a palavra entre si (citando o nome um do outro) até que o User
-    digite algo novo ou encerre a conversa.
-
-Mesmo enquanto o terminal está bloqueado esperando o próximo `input()`, os
-agentes continuam rodando em background (cada um é uma task assíncrona
-independente escutando o MessageBus), então o debate entre eles não para.
+Chat de terminal da mesa redonda PAPINHO: Qwen, Gpt e Gemini debatem em
+background enquanto o usuário digita a próxima pergunta. LoggerAgent grava
+a transcrição em minhas_ideias.txt.
 """
-import sys
-import itertools
 import asyncio
 from datetime import datetime
 import re
 
-import rich
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.panel import Panel
-from rich.align import Align
-from rich.text import Text
 console = Console()
 
 
@@ -39,11 +23,6 @@ from orchestrator.agents.gemini_agent import GeminiAgent
 from orchestrator.agents.monitor_agent import MonitorAgent
 from logger_agent import LoggerAgent
 
-# --------------------------------------------------------------------------
-# Configuração central: nomes, modelos e parâmetros de cada agente.
-# Manter tudo aqui evita "magic strings" espalhadas pelo código e garante
-# que renomear um agente ou trocar de modelo seja uma mudança em um só lugar.
-# --------------------------------------------------------------------------
 NOME_QWEN = "Qwen"
 NOME_REVISOR = "Gpt"
 NOME_GEMINI = "Gemini"
@@ -57,8 +36,7 @@ ARQUIVO_LOG = "minhas_ideias.txt"
 
 NOMES_DEBATEDORES = [NOME_QWEN, NOME_REVISOR, NOME_GEMINI]
 COMANDOS_SAIDA = {"sair", "exit", "quit"}
-PAUSA_APOS_ENVIO = 1.5  # segundos de respiro antes de mostrar o prompt de novo
-EXIBIR_PENSAMENTO = False  # Começa oculto por padrão
+EXIBIR_PENSAMENTO = False
 
 CORES_AGENTES = {
     NOME_QWEN: "cyan",
@@ -69,37 +47,30 @@ CORES_AGENTES = {
 }
 
 def exibir_mensagem_visual(remetente, conteudo):
-    # Pega a cor correspondente ou usa branco como padrão
     cor = CORES_AGENTES.get(remetente, "white")
-    
+
     if remetente == "User":
         console.print(f"\n[bold {cor}]Você:[/bold {cor}] {conteudo}\n")
     elif "ALERTA DE SISTEMA" in conteudo:
         console.print(f"[dim yellow]{conteudo}[/dim yellow]")
     else:
-        # === MÁGICA DO PENSAMENTO BLINDADA ===
         if "<think>" in conteudo:
-            # Se a IA abriu a tag mas esqueceu de fechar, nós fechamos à força!
             if "</think>" not in conteudo:
                 conteudo += "\n</think>"
-            
-            # Trocamos as tags pelo bloco de código, ignorando maiúsculas/minúsculas
+
             conteudo = re.sub(r"<think>", "🧠 **Pensamento Interno:**\n```text\n", conteudo, flags=re.IGNORECASE)
             conteudo = re.sub(r"</think>", "\n```\n", conteudo, flags=re.IGNORECASE)
-        # =====================================
 
-        # Para os agentes, renderiza o Markdown
         md = Markdown(conteudo)
         painel = Panel(
-            md, 
-            title=f"[bold {cor}] {remetente} [/bold {cor}]", 
-            border_style=cor, 
+            md,
+            title=f"[bold {cor}] {remetente} [/bold {cor}]",
+            border_style=cor,
             padding=(1, 2)
         )
         console.print(painel)
-# --------------------------------------------------------------------------
-# Personas (system prompts)
-# --------------------------------------------------------------------------
+
+
 def _instrucao_mesa_redonda(nome_proprio: str) -> str:
     colega_a, colega_b = (n for n in NOMES_DEBATEDORES if n != nome_proprio)
     return f"""
@@ -167,14 +138,6 @@ nomeie explicitamente o que eles acertaram antes de sintetizar. Se você for o p
 
 VOZ: clara, organizada, diplomática. Firme nas sínteses — não termine em "depende"."""
 
-# --------------------------------------------------------------------------
-# Utilitários de texto
-# --------------------------------------------------------------------------
-_PADRAO_NOMES_AGENTES = re.compile(
-    r"\b(" + "|".join(re.escape(nome) for nome in NOMES_DEBATEDORES) + r")\b",
-    flags=re.IGNORECASE,
-)
-# Agora ele remove o <think> e tudo depois, parando no </think> OU no final do texto ($)
 _PADRAO_PENSAMENTO_INTERNO = re.compile(r"<think>.*?(?:</think>|$)\n*", flags=re.DOTALL)
 
 
@@ -185,9 +148,6 @@ def _remover_pensamento_interno(texto: str) -> str:
     return _PADRAO_PENSAMENTO_INTERNO.sub("", texto).strip()
 
 
-# --------------------------------------------------------------------------
-# Setup dos agentes
-# --------------------------------------------------------------------------
 def criar_agentes(bus: MessageBus) -> dict[str, Agent]:
     """Instancia e configura todos os agentes do sistema, retornando um dict {nome: agente}."""
 
@@ -224,9 +184,6 @@ def criar_agentes(bus: MessageBus) -> dict[str, Agent]:
         "Monitor": monitor,
     }
 
-# --------------------------------------------------------------------------
-# Modos de Conversa (Diretrizes injetadas dinamicamente)
-# --------------------------------------------------------------------------
 MODOS_DE_CONVERSA = {
     "/crashtest": "DIRETRIZ DE MODO (CRASH TEST): O objetivo é encontrar falhas e riscos. O Auditor tem peso duplo. Passem a palavra entre si focando em quebrar a ideia.",
     
@@ -251,31 +208,22 @@ MODOS_DE_CONVERSA = {
     "padrao": "DIRETRIZ DE MODO (FORÇA-TAREFA) — Objetivo: produzir a melhor resposta. Mesa roda livremente. REGRA DE ENCERRAMENTO: apenas o Estrategista fecha o ciclo com [SOLUÇÃO FINAL]. Explorador e Auditor OBRIGATÓRIAMENTE passam a palavra ao final do turno. Quando maduro, o Estrategista fecha com [SOLUÇÃO FINAL] e ENCERRA O CICLO."
 }
 
-# --------------------------------------------------------------------------
-# Interface de terminal
-# --------------------------------------------------------------------------
-
 async def animacao_carregamento(bus: MessageBus) -> None:
     """Exibe pontinhos de carregamento enquanto os agentes trabalham."""
     tempo_ocioso = 0
-    
+
     try:
-        # O "with console.status" abraça o seu loop de espera.
         with console.status("[bold yellow]A mesa redonda está debatendo...", spinner="dots"):
             while True:
-                # Se alguém estiver segurando o bastão, a animação roda
                 if bus.bastao.locked():
-                    tempo_ocioso = 0 
+                    tempo_ocioso = 0
                 else:
-                    # Se a mesa estiver livre, começamos a contar o tempo
                     tempo_ocioso += 0.2
-                    if tempo_ocioso > 2.0: 
-                        # 2 segundos de silêncio absoluto = o turno da mesa acabou!
+                    if tempo_ocioso > 2.0:
                         break
-                
+
                 await asyncio.sleep(0.2)
     finally:
-        # O "with" termina, o Rich apaga a animação da tela sozinho, e nós liberamos o turno!
         bus.turno_encerrado.set()
 
 async def display_messages(bus: MessageBus) -> None:
@@ -301,15 +249,10 @@ async def display_messages(bus: MessageBus) -> None:
         exibir_mensagem_visual(msg.sender, conteudo_limpo)
 
 
-from rich.panel import Panel
-from rich.align import Align
-from rich.text import Text
-
 def _exibir_boas_vindas() -> None:
-    """Exibe um cabeçalho minimalista com cara de ferramenta de IA moderna."""
-    console.clear() # Limpa a tela ao iniciar para dar um visual limpo de app
-    
-    # Monta um painel de boas-vindas sofisticado, sem poluição visual
+    """Exibe o cabeçalho inicial do chat."""
+    console.clear()
+
     banner_texto = (
         "[bold cyan]PAPINHO[/bold cyan] [dim]— Multi-Agent Orchestrator[/dim]\n"
         "[dim]Mesa Redonda: Qwen (Explorador) | Gpt (Auditor) | Gemini (Estrategista)[/dim]\n\n"
@@ -361,7 +304,7 @@ async def loop_conversa(bus: MessageBus) -> None:
     """Loop principal: lê a entrada do usuário, filtra comandos/modos e publica a mensagem."""
     while True:
         await bus.turno_encerrado.wait()
-        
+
         entrada = (await asyncio.to_thread(console.input, "\n[bold green]Você:[/bold green] ")).strip()
 
         if entrada.lower() in COMANDOS_SAIDA:
@@ -378,7 +321,7 @@ async def loop_conversa(bus: MessageBus) -> None:
 
             if entrada.startswith("/pensamento"):
                 global EXIBIR_PENSAMENTO
-                EXIBIR_PENSAMENTO = not EXIBIR_PENSAMENTO # Inverte o estado (Liga/Desliga)
+                EXIBIR_PENSAMENTO = not EXIBIR_PENSAMENTO
                 status = "ATIVADA" if EXIBIR_PENSAMENTO else "DESATIVADA"
                 console.print(f"[bold yellow] [Sistema]: Exibição de pensamento interno {status}.[/bold yellow]")
                 continue
@@ -395,13 +338,11 @@ async def loop_conversa(bus: MessageBus) -> None:
                 print(f"⚠️ [Sistema]: Modo não reconhecido. Use: {modos_validos} ou digite normalmente para Força-Tarefa.")
                 continue
 
-        # Substitua toda a montagem da mensagem a partir do 'texto_ofuscado' por isto:
         diretriz = MODOS_DE_CONVERSA[modo_ativo]
-        
-        # Se você não chamou nenhum agente explicitamente, o Qwen puxa a fila por padrão
+
         if not any(nome.lower() in texto_usuario.lower() for nome in NOMES_DEBATEDORES):
             texto_usuario = f"Qwen, inicie a análise: {texto_usuario}"
-            
+
         mensagem_final = f"{texto_usuario}\n\n[{diretriz}]"
 
         mensagem = Message(
@@ -409,23 +350,19 @@ async def loop_conversa(bus: MessageBus) -> None:
             role="user",
             content=mensagem_final,
         )
-        
+
         bus.publish(mensagem)
-        
+
         bus.turno_encerrado.clear()
         asyncio.create_task(animacao_carregamento(bus))
 
 
-# --------------------------------------------------------------------------
-# Orquestração principal
-# --------------------------------------------------------------------------
 async def main() -> None:
     print("Iniciando o Orquestrador de Agentes...")
     bus = MessageBus()
-    # Garante que apenas um agente processe e responda por vez
     bus.bastao = asyncio.Lock()
     bus.turno_encerrado = asyncio.Event()
-    bus.turno_encerrado.set() # Começa liberado para o usuário falar primeiro
+    bus.turno_encerrado.set()
 
     agentes = criar_agentes(bus)
 
