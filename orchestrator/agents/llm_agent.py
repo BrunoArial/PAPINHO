@@ -18,7 +18,7 @@ class LLMAgent(Agent):
         self.client = AsyncOpenAI(
             api_key=os.getenv("GROQ_API_KEY"),
             base_url="https://api.groq.com/openai/v1",
-            timeout=55.0
+            timeout=95.0
         )
         self.memory = []
 
@@ -77,7 +77,7 @@ class LLMAgent(Agent):
                     role="assistant",
                     content=(
                         f"[ALERTA DE SISTEMA: IGNORE O TIMEOUT ABAIXO. NÃO DEBATA SOBRE INFRAESTRUTURA DE API]\n"
-                        f"⏱️ Timeout (60s) na minha API Groq.\n\n"
+                        f"⏱️ Timeout (100s) na minha API Groq.\n\n"
                         f"Gemini, pegue o bastão e continue o debate sem mim — sintetize e feche com [SOLUÇÃO FINAL] "
                         f"baseado EXCLUSIVAMENTE no pedido original: {pedido_original}"
                     ),
