@@ -4,7 +4,7 @@ Este arquivo dá orientações ao Claude Code (claude.ai/code) ao trabalhar com 
 
 ## Projeto: PAPINHO
 
-Orquestrador de múltiplos agentes de IA em Python. Uma "mesa redonda" de agentes LLM (Qwen e Gpt-OSS via Groq, Gemini via Google AI Studio) troca mensagens em um `MessageBus` pub/sub assíncrono em memória. Um `MonitorAgent` silencioso detecta falas órfãs (agente que não cita nenhum colega) e injeta um sinal de continuação. Um `LoggerAgent` grava a transcrição completa em `minhas_ideias.txt`.
+Orquestrador de múltiplos agentes de IA em Python. Uma "mesa redonda" de agentes LLM (Qwen e Groq via Groq, Gemini via Google AI Studio) troca mensagens em um `MessageBus` pub/sub assíncrono em memória. Um `MonitorAgent` silencioso detecta falas órfãs (agente que não cita nenhum colega) e injeta um sinal de continuação. Um `LoggerAgent` grava a transcrição completa em `minhas_ideias.txt`.
 
 A interface do usuário é um chat REPL no terminal (`chat_interativo.py`) com UI em `rich` (painéis coloridos por agente, animação de carregamento, banner de boas-vindas, painel de ajuda). Toda a interação com os modelos acontece em português.
 
@@ -60,7 +60,7 @@ Não há suíte de testes, linter ou formatter configurado. Valide alterações 
 
 ### Papéis dos agentes (personas em `chat_interativo.py`)
 - **Qwen — Explorador.** Pede clarificação quando falta contexto crítico, gera no MÁXIMO 2 caminhos distintos, marca `[verificar: X]` em fatos não confirmados. Voz: curioso, direto, brutalmente conciso.
-- **Gpt — Auditor.** Classifica cada risco como `[fatal | recuperável | cosmético]`, exige mitigação concreta junto, desafia números/datas sem origem. Voz: incisiva, factual, implacável.
+- **Groq — Auditor.** Classifica cada risco como `[fatal | recuperável | cosmético]`, exige mitigação concreta junto, desafia números/datas sem origem. Voz: incisiva, factual, implacável.
 - **Gemini — Estrategista.** Tem formato fixo (`## Resumo / ## Passos / ## Premissas a confirmar / ## O que NÃO estamos vendo`), prioriza pela restrição mais dura. Voz: clara, organizada, diplomática.
 - **Monitor — Vigia.** Sem persona; sem LLM. Função puramente estrutural.
 
@@ -68,7 +68,7 @@ As três personas debatedoras são construídas concatenando uma base + `_instru
 
 ### UI / terminal (`chat_interativo.py`)
 - `Console` do `rich` para tudo: banners, painéis coloridos por agente, animação de "pontinhos" enquanto o debate rola.
-- `exibir_mensagem_visual()` renderiza Markdown dentro de `Panel` com borda na cor do agente (cyan=User/Qwen, red=Gpt, blue=Gemini, yellow=Sistema).
+- `exibir_mensagem_visual()` renderiza Markdown dentro de `Panel` com borda na cor do agente (cyan=User/Qwen, red=Groq, blue=Gemini, yellow=Sistema).
 - Blocos `<think>…</think>` são automaticamente fechados se o modelo esquecer o `</think>`, transformados em "🧠 **Pensamento Interno:**" + bloco de código, e filtrados por padrão. Comando `/pensamento` alterna `EXIBIR_PENSAMENTO`.
 - Animação de carregamento (`animacao_carregamento`) roda até detectar 2s de silêncio da mesa, então libera `bus.turno_encerrado` para o usuário digitar.
 

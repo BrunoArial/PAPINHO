@@ -2,7 +2,7 @@
 monitor_agent.py
 
 Agente silencioso de orquestração. Não usa LLM. Vigia o bus e detecta falas
-dos debatedores (Qwen, Revisor, Gemini) que NÃO citam nenhum colega — sintoma
+dos debatedores (Qwen, Groq, Gemini) que NÃO citam nenhum colega — sintoma
 clássico de agente que largou o microfone antes da vez.
 
 Quando detecta o padrão, republica a fala original com um sufixo interno
@@ -21,7 +21,7 @@ from orchestrator.models import Message
 class MonitorAgent(Agent):
     """Vigia silêncio da mesa e republica falas órfãs com sinal de continuação."""
 
-    DEBATEDORES = ("Qwen", "Gpt", "Gemini")
+    DEBATEDORES = ("Qwen", "Groq", "Gemini")
 
     def __init__(self, name: str, bus):
         super().__init__(name=name, persona="", bus=bus)
@@ -51,7 +51,7 @@ class MonitorAgent(Agent):
             f"{message.content}\n\n"
             f"[INTERNO-MONITOR: a fala acima não citou nenhum colega. "
             f"A mesa quer continuar o debate. Ao republicar/responder, "
-            f"termine citando Gpt ou Gemini para acionar o próximo turno. "
+            f"termine citando Groq ou Gemini para acionar o próximo turno. "
             f"Lembre-se: no modo padrão só o Gemini pode encerrar com [SOLUÇÃO FINAL].]"
         )
 

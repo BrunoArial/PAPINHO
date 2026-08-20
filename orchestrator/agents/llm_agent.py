@@ -29,7 +29,7 @@ class LLMAgent(Agent):
         # Limpa pontuação antes do rfind para que "**Qwen,**" e "Qwen!" ativem igual.
         texto_limpo_para_roteamento = re.sub(r'[^a-zA-Z0-9\s]', '', message.content.lower())
 
-        nomes_agentes = ["qwen", "gpt", "gemini"]
+        nomes_agentes = ["qwen", "groq", "gemini"]
         ultimo_nome = None
         maior_indice = -1
 

@@ -1,6 +1,6 @@
 # PAPINHO — Orquestrador Multi-Agente de IA
 
-**PAPINHO** é uma arquitetura em Python que coloca vários agentes LLM para conversar entre si em uma "mesa redonda" assíncrona. Você digita uma ideia ou um problema técnico no terminal e três personas — **Qwen (Explorador)**, **Gpt (Auditor)** e **Gemini (Estrategista)** — debatem até chegar a uma solução estruturada. Toda a transcrição fica gravada em `minhas_ideias.txt`.
+**PAPINHO** é uma arquitetura em Python que coloca vários agentes LLM para conversar entre si em uma "mesa redonda" assíncrona. Você digita uma ideia ou um problema técnico no terminal e três personas — **Qwen (Explorador)**, **Groq (Auditor)** e **Gemini (Estrategista)** — debatem até chegar a uma solução estruturada. Toda a transcrição fica gravada em `minhas_ideias.txt`.
 
 ## Visão geral
 
@@ -81,7 +81,7 @@ Sobe `RuleBasedAgent`, `EchoAgent` e `LLMAgent` (sem chamadas reais de LLM), pub
         ┌──────────────────────────────┼──────────────────────────────┐
         ▼                              ▼                              ▼
    ┌─────────┐                   ┌─────────┐                    ┌─────────┐
-   │  Qwen   │ ◀── menciona ──── │   Gpt   │ ◀── menciona ──── │ Gemini  │
+   │  Qwen   │ ◀── menciona ──── │   Groq  │ ◀── menciona ──── │ Gemini  │
    │Groq LLM │                   │Groq LLM │                   │ Google  │
    └────┬────┘                   └────┬────�                   └────┬────┘
         │ publica                    │ publica                    │ publica
@@ -112,7 +112,7 @@ Sobe `RuleBasedAgent`, `EchoAgent` e `LLMAgent` (sem chamadas reais de LLM), pub
 | Agente | Modelo | Papel |
 |---|---|---|
 | `Qwen` (`LLMAgent`) | `qwen/qwen3.6-27b` via Groq | Explorador — abre caminhos, marca `[verificar: X]` |
-| `Gpt` (`LLMAgent`) | `openai/gpt-oss-120b` via Groq | Auditor — classifica riscos em `[fatal \| recuperável \| cosmético]` |
+| `Groq` (`LLMAgent`) | `groq/compound` via Groq | Auditor — classifica riscos em `[fatal \| recuperável \| cosmético]` |
 | `Gemini` (`GeminiAgent`) | `gemini-3.1-flash-lite` via Google AI Studio | Estrategista — plano final em `## Resumo / ## Passos / ## Premissas / ## O que NÃO estamos vendo` |
 | `Logger` (`LoggerAgent`) | — | Grava transcrição em `.txt` |
 | `Monitor` (`MonitorAgent`) | — | Vigia silêncio da mesa, injeta sinal de continuação |
@@ -130,7 +130,7 @@ Injetadas em cada persona via `_instrucao_mesa_redonda(nome)`:
 ### Timeouts e resiliência
 
 - `LLMAgent`: `asyncio.wait_for(..., timeout=35.0)` sobre a chamada Groq. Em caso de timeout ou erro, publica uma mensagem de fallback instruindo o Gemini a fechar com `[SOLUÇÃO FINAL]`.
-- `GeminiAgent`: mesmo cap de 35s; em erro, passa o bastão para o Qwen ou Gpt.
+- `GeminiAgent`: mesmo cap de 35s; em erro, passa o bastão para o Qwen ou Groq.
 
 ## Mapa de arquivos
 

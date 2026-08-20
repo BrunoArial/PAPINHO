@@ -51,7 +51,7 @@ class GeminiAgent(Agent):
                     content=(
                         f"[ALERTA DE SISTEMA: IGNORE O TIMEOUT ABAIXO. NÃO DEBATA SOBRE INFRAESTRUTURA DE API]\n"
                         f"A API do Google sofreu um Timeout (35s).\n\n"
-                        f"Gpt, assuma a análise focando EXCLUSIVAMENTE no pedido original: {pedido_original}"
+                        f"Groq, assuma a análise focando EXCLUSIVAMENTE no pedido original: {pedido_original}"
                     )
                 )
                 self.bus.publish(erro_msg)

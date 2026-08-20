@@ -1,7 +1,7 @@
 """
 chat_interativo.py
 
-Chat de terminal da mesa redonda PAPINHO: Qwen, Gpt e Gemini debatem em
+Chat de terminal da mesa redonda PAPINHO: Qwen, Groq e Gemini debatem em
 background enquanto o usuário digita a próxima pergunta. LoggerAgent grava
 a transcrição em minhas_ideias.txt.
 """
@@ -24,12 +24,12 @@ from orchestrator.agents.monitor_agent import MonitorAgent
 from logger_agent import LoggerAgent
 
 NOME_QWEN = "Qwen"
-NOME_REVISOR = "Gpt"
+NOME_REVISOR = "Groq"
 NOME_GEMINI = "Gemini"
 NOME_LOGGER = "Logger"
 
 MODELO_QWEN = "qwen/qwen3.6-27b"
-MODELO_REVISOR = "openai/gpt-oss-120b"
+MODELO_REVISOR = "groq/compound"
 MODELO_GEMINI = "gemini-3.1-flash-lite"
 
 ARQUIVO_LOG = "minhas_ideias.txt"
@@ -86,7 +86,7 @@ REGRAS DA MESA REDONDA PAPINHO:
 
 
 PERSONA_QWEN_BASE = f"""Você é {NOME_QWEN}, o Explorador da mesa redonda PAPINHO. \
-Seu trabalho é abrir caminhos que o Gpt não pensaria e que o {NOME_GEMINI} \
+Seu trabalho é abrir caminhos que o {NOME_REVISOR} não pensaria e que o {NOME_GEMINI} \
 não ousaria.
 
 ANTES DE PRODUZIR:
@@ -159,7 +159,7 @@ def criar_agentes(bus: MessageBus) -> dict[str, Agent]:
         max_tokens=4000
     )
 
-    Gpt = LLMAgent(
+    Groq = LLMAgent(
         name=NOME_REVISOR,
         persona=PERSONA_REVISOR_BASE + _instrucao_mesa_redonda(NOME_REVISOR),
         bus=bus,
@@ -178,7 +178,7 @@ def criar_agentes(bus: MessageBus) -> dict[str, Agent]:
 
     return {
         NOME_QWEN: qwen,
-        NOME_REVISOR: Gpt,
+        NOME_REVISOR: Groq,
         NOME_GEMINI: gemini,
         NOME_LOGGER: logger,
         "Monitor": monitor,
@@ -255,7 +255,7 @@ def _exibir_boas_vindas() -> None:
 
     banner_texto = (
         "[bold cyan]PAPINHO[/bold cyan] [dim]— Multi-Agent Orchestrator[/dim]\n"
-        "[dim]Mesa Redonda: Qwen (Explorador) | Gpt (Auditor) | Gemini (Estrategista)[/dim]\n\n"
+        "[dim]Mesa Redonda: Qwen (Explorador) | Groq (Auditor) | Gemini (Estrategista)[/dim]\n\n"
         "[italic green]Digite sua ideia ou problema técnico. Use /ajuda ou comandos como /crashtest, /codigo.[/italic green]\n"
         f"[dim]Comandos de saída: {', '.join(sorted(COMANDOS_SAIDA))}[/dim]"
     )
@@ -274,14 +274,14 @@ def _exibir_ajuda() -> None:
     ajuda_texto = (
         "[bold cyan]Comandos Disponíveis no PAPINHO:[/bold cyan]\n\n"
         "[bold yellow]Modos de Conversa (digite o comando seguido do seu tema):[/bold yellow]\n"
-        "  [cyan]/crashtest[/cyan]  - Encontra falhas e riscos profundos (Gpt com peso duplo).\n"
+        "  [cyan]/crashtest[/cyan]  - Encontra falhas e riscos profundos (Groq com peso duplo).\n"
         "  [cyan]/sintese[/cyan]     - Gemini assume a liderança e fecha o ciclo rapidamente.\n"
         "  [cyan]/debate[/cyan]     - Debate estruturado de uma única volta.\n"
         "  [cyan]/livre[/cyan]      - Exploração solta sem formato forçado.\n"
         "  [cyan]/curto[/cyan]      - Resposta expressa em 2-3 frases.\n"
         "  [cyan]/codigo[/cyan]     - Foco em arquitetura de código e blocos técnicos.\n"
         "  [cyan]/explica[/cyan]    - Modo pedagógico passo a passo.\n"
-        "  [cyan]/revisa[/cyan]     - Foco em auditoria de estilo e estrutura (Gpt lidera).\n"
+        "  [cyan]/revisa[/cyan]     - Foco em auditoria de estilo e estrutura (Groq lidera).\n"
         "  [cyan]/brainstorm[/cyan] - Ideação pura sem críticas bloqueantes.\n"
         "  [cyan]/decide[/cyan]     - Apoio estruturado a escolhas técnicas.\n\n"
         "[bold yellow]Comandos do Sistema:[/bold yellow]\n"
