@@ -15,5 +15,5 @@ class RuleBasedAgent(Agent):
         text = message.content.lower()
         for kw, resp in self.rules.items():
             if kw.lower() in text:
-                self.publish(resp)
+                self.publish(resp, source=message)
                 return

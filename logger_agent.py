@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime
 from orchestrator.agent import Agent
 from orchestrator.models import Message
@@ -11,7 +12,14 @@ class LoggerAgent(Agent):
         self.arquivo_log = arquivo_log
 
     async def on_message(self, message: Message):
-        if message.role == "system":
+        metadata_type = (message.metadata or {}).get("type")
+        if message.role == "system" and metadata_type not in {
+            "agent_processing_error",
+            "agent_task_error",
+            "agent_recovery_exhausted",
+            "monitor_handoff_exhausted",
+            "routing_unavailable",
+        }:
             return
 
         agora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -20,5 +28,8 @@ class LoggerAgent(Agent):
         texto_para_salvar = f"[{agora}] {remetente}:\n{message.content}\n"
         texto_para_salvar += "-" * 50 + "\n"
 
+        await asyncio.to_thread(self._write, texto_para_salvar)
+
+    def _write(self, text: str) -> None:
         with open(self.arquivo_log, "a", encoding="utf-8") as f:
-            f.write(texto_para_salvar)
+            f.write(text)

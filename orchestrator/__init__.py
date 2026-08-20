@@ -5,5 +5,7 @@ __all__ = [
     "models",
     "bus",
     "agent",
+    "router",
+    "recovery",
     "agents",
 ]

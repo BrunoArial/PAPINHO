@@ -1,92 +1,142 @@
-import os
+"""
+orchestrator/agents/gemini_agent.py
+
+GeminiAgent — debatedor que usa o Google genai SDK para gerar respostas.
+
+Mudanças desta versão:
+- Roteamento centralizado (não depende mais de aliases hifenizados —
+  a normalização do router lida com "g-e-m-i-n-i").
+- CancelledError NÃO é capturado como falha.
+- Pensamento interno (se vier) é incluído no contexto da próxima chamada.
+- Erros viram mensagens de recuperação estruturadas.
+"""
 import asyncio
+import os
+import re
+
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-from orchestrator.agent import Agent
-from orchestrator.models import Message
+
+from ..agent import Agent
+from ..models import Message
+from ..recovery import publish_recovery
+from ..router import is_addressed
 
 load_dotenv()
 
+
+_THINK_OPEN_RE = re.compile(r"<think>", flags=re.IGNORECASE)
+_THINK_CLOSE_RE = re.compile(r"</think>", flags=re.IGNORECASE)
+
+
+def _split_thinking(content: str) -> tuple[str, str]:
+    if not content:
+        return "", ""
+
+    thinking_parts: list[str] = []
+    visible_parts: list[str] = []
+    cursor = 0
+
+    while match_open := _THINK_OPEN_RE.search(content, cursor):
+        visible_parts.append(content[cursor : match_open.start()])
+        match_close = _THINK_CLOSE_RE.search(content, match_open.end())
+
+        if match_close is None:
+            thinking_parts.append(content[match_open.end() :])
+            cursor = len(content)
+            break
+
+        thinking_parts.append(content[match_open.end() : match_close.start()])
+        cursor = match_close.end()
+
+    visible_parts.append(content[cursor:])
+
+    thinking = "\n".join(
+        part for raw_part in thinking_parts if (part := raw_part.strip())
+    )
+    content_limpo = " ".join(
+        part for raw_part in visible_parts if (part := raw_part.strip())
+    )
+    return thinking, content_limpo
+
+
+def _truncate(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "…"
+
+
 class GeminiAgent(Agent):
-    def __init__(self, name: str, persona: str, bus, model: str = "gemini-3.1-flash-lite"):
+    def __init__(
+        self,
+        name: str,
+        persona: str,
+        bus,
+        model: str = "gemini-3.1-flash-lite",
+        api_key_env: str = "GEMINI_API_KEY",
+        thinking_share_limit: int = 500,
+    ):
         super().__init__(name, persona=persona, bus=bus)
         self.model = model
-        self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-        # Aceita tanto o nome limpo quanto a forma hifenizada ("g-e-m-i-n-i"),
-        # para tolerar delegação que chega ao bus com hífens por alguma camada antiga.
-        self._aliases = [
-            self.name.lower(),
-            "-".join(self.name.lower()),
-        ]
+        self.client = genai.Client(api_key=os.getenv(api_key_env))
+        self.thinking_share_limit = thinking_share_limit
 
     async def on_message(self, message: Message):
         if message.role == "system" or message.sender == self.name:
             return
 
-        conteudo_lower = message.content.lower()
-        chamado = any(alias in conteudo_lower for alias in self._aliases)
-
-        if not chamado:
+        addressed = is_addressed(message, self.name)
+        if not addressed:
             return
 
-        async with self.bus.bastao:
-            if self.bus.history()[-1] is not message:
-                return
-
-            try:
-                response_text = await asyncio.wait_for(self._call_llm(), timeout=35.0)
-                nova_mensagem = Message(sender=self.name, role="assistant", content=response_text)
-                self.bus.publish(nova_mensagem)
-            except asyncio.TimeoutError:
-                msg_bruta = next((m.content for m in self.bus.history() if m.sender == "User"), "")
-                if "analise esta mensagem do usuário: '" in msg_bruta:
-                    pedido_original = msg_bruta.split("analise esta mensagem do usuário: '")[1].split("\n\n[")[0]
-                else:
-                    pedido_original = "o desafio principal."
-
-                erro_msg = Message(
+        try:
+            response_text = await self.await_with_deadline(
+                self._call_llm(),
+                timeout=35.0,
+                label=f"modelo {self.model}",
+            )
+            thinking, texto_limpo = _split_thinking(response_text)
+            self.bus.publish(
+                Message(
                     sender=self.name,
                     role="assistant",
-                    content=(
-                        f"[ALERTA DE SISTEMA: IGNORE O TIMEOUT ABAIXO. NÃO DEBATA SOBRE INFRAESTRUTURA DE API]\n"
-                        f"A API do Google sofreu um Timeout (35s).\n\n"
-                        f"Groq, assuma a análise focando EXCLUSIVAMENTE no pedido original: {pedido_original}"
-                    )
+                    content=texto_limpo or response_text.strip(),
+                    thinking=thinking,
+                    turn_id=message.turn_id,
+                    mode=message.mode,
+                    hop_count=message.hop_count + 1,
                 )
-                self.bus.publish(erro_msg)
-
-            except Exception as e:
-                msg_bruta = next((m.content for m in self.bus.history() if m.sender == "User"), "")
-                if "analise esta mensagem do usuário: '" in msg_bruta:
-                    pedido_original = msg_bruta.split("analise esta mensagem do usuário: '")[1].split("\n\n[")[0]
-                else:
-                    pedido_original = "o desafio principal."
-
-                erro_msg = Message(
-                    sender=self.name,
-                    role="assistant",
-                    content=(
-                        f"[ALERTA DE SISTEMA: IGNORE O ERRO ABAIXO. NÃO DEBATA SOBRE INFRAESTRUTURA DE API]\n"
-                        f"Tive um problema na API do Google: {str(e)}\n\n"
-                        f"Qwen, minha conexão caiu. Assuma a exploração focando EXCLUSIVAMENTE neste pedido: {pedido_original}"
-                    )
-                )
-                self.bus.publish(erro_msg)
+            )
+        except asyncio.TimeoutError:
+            publish_recovery(
+                self.bus,
+                self.name,
+                TimeoutError(f"Timeout (35s) na chamada do modelo {self.model}"),
+                source_message=message,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            publish_recovery(self.bus, self.name, e, source_message=message)
 
     async def _call_llm(self) -> str:
-        # Reconstrói contexto das últimas 10 mensagens: ele vê o que foi dito
-        # enquanto estava ocioso e pode entrar no debate com informação fresca.
+        # Reconstrói contexto das últimas 10 mensagens visíveis.
         historico_recente = self.bus.history()[-10:]
 
         contexto = "Histórico recente da mesa redonda:\n\n"
         for msg in historico_recente:
-            if msg.role != "system":
-                contexto += f"[{msg.sender}]: {msg.content}\n"
+            if msg.role == "system":
+                continue
+            linha = f"[{msg.sender}]: {msg.content}"
+            if msg.thinking:
+                thinking_trunc = _truncate(msg.thinking, self.thinking_share_limit)
+                linha += f"\n  (pensou: {thinking_trunc})"
+            contexto += linha + "\n"
 
         prompt_final = (
             f"{contexto}\n"
-            f"--- \n"
+            f"---\n"
             f"Você (nome: {self.name}) acabou de ser mencionado na conversa acima.\n"
             f"Responda seguindo ESTRITAMENTE a sua persona e continue o debate com a equipe."
         )
@@ -99,7 +149,7 @@ class GeminiAgent(Agent):
         response = await self.client.aio.models.generate_content(
             model=self.model,
             contents=prompt_final,
-            config=config
+            config=config,
         )
 
         return response.text

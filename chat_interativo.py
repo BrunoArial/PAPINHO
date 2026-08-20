@@ -4,6 +4,16 @@ chat_interativo.py
 Chat de terminal da mesa redonda PAPINHO: Qwen, Groq e Gemini debatem em
 background enquanto o usuário digita a próxima pergunta. LoggerAgent grava
 a transcrição em minhas_ideias.txt.
+
+Mudanças desta versão:
+- Substitui `bus.bastao` (Lock) e `bus.turno_encerrado` (Event) por
+  `bus.turno` (TurnState) com `quiescent_event`.
+- Encerramento de rodada agora é EXPLICITO: o usuário aperta Enter vazio
+  para liberar o turno. Não há mais "bastão livre por 2s".
+- Mensagens de recuperação (`metadata["type"] == "agent_recovery_request"`)
+  são exibidas como alerta para que uma falha não pareça um salto silencioso.
+- Pensamento interno continua a ser filtrado por padrão; `/pensamento`
+  mantém a alternância.
 """
 import asyncio
 from datetime import datetime
@@ -12,15 +22,23 @@ import re
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
+
 console = Console()
 
 
-from orchestrator.agent import Agent
+from orchestrator.agent import Agent, AGENT_ERROR_METADATA_TYPE, AGENT_TASK_ERROR_METADATA_TYPE
 from orchestrator.bus import MessageBus
 from orchestrator.models import Message
 from orchestrator.agents.llm_agent import LLMAgent
 from orchestrator.agents.gemini_agent import GeminiAgent
 from orchestrator.agents.monitor_agent import MonitorAgent
+from orchestrator.agents.monitor_agent import MONITOR_EXHAUSTED_METADATA_TYPE
+from orchestrator.recovery import RECOVERY_EXHAUSTED_METADATA_TYPE, RECOVERY_METADATA_TYPE
+from orchestrator.router import (
+    ROUTING_UNAVAILABLE_METADATA_TYPE,
+    last_addressed_agent,
+    policy_for_mode,
+)
 from logger_agent import LoggerAgent
 
 NOME_QWEN = "Qwen"
@@ -29,7 +47,7 @@ NOME_GEMINI = "Gemini"
 NOME_LOGGER = "Logger"
 
 MODELO_QWEN = "qwen/qwen3.6-27b"
-MODELO_REVISOR = "groq/compound"
+MODELO_REVISOR = "openai/gpt-oss-20b"
 MODELO_GEMINI = "gemini-3.1-flash-lite"
 
 ARQUIVO_LOG = "minhas_ideias.txt"
@@ -45,6 +63,26 @@ CORES_AGENTES = {
     "User": "green",
     "Sistema": "yellow"
 }
+
+_FILTERED_METADATA_TYPES = {
+    "agent_thinking",
+    "agent_stream",
+    "monitor_signal",
+}
+
+_VISIBLE_SYSTEM_TYPES = {
+    AGENT_ERROR_METADATA_TYPE,
+    AGENT_TASK_ERROR_METADATA_TYPE,
+    RECOVERY_EXHAUSTED_METADATA_TYPE,
+    MONITOR_EXHAUSTED_METADATA_TYPE,
+    ROUTING_UNAVAILABLE_METADATA_TYPE,
+}
+
+
+def _append_log(line: str) -> None:
+    with open(ARQUIVO_LOG, "a", encoding="utf-8") as arquivo:
+        arquivo.write(line)
+
 
 def exibir_mensagem_visual(remetente, conteudo):
     cor = CORES_AGENTES.get(remetente, "white")
@@ -77,9 +115,9 @@ def _instrucao_mesa_redonda(nome_proprio: str) -> str:
 
 REGRAS DA MESA REDONDA PAPINHO:
 1. Você é {nome_proprio}. Os outros debatedores são {colega_a} e {colega_b}.
-2. PENSAMENTO OBRIGATÓRIO: A sua resposta DEVE começar OBRIGATORIAMENTE com a tag <think>. Escreva todo o seu raciocínio, críticas e planejamento da resposta lá dentro. Feche com </think> e, somente depois disso, escreva a sua resposta final que será exibida ao usuário.
-3. ISENÇÃO: O bloco <think> está 100% isento das suas regras de concisão. Pense o quanto precisar lá dentro. Mas a sua resposta final (fora da tag) deve seguir sua persona estritamente.
-4. ESGOTE O SEU RACIOCÍNIO: Se identificar problemas, proponha mitigações detalhadas no seu pensamento interno antes de responder.
+2. RACIOCÍNIO INTERNO: Analise o problema internamente, mas NÃO exponha cadeia de pensamento, planejamento privado nem tags <think>. Entregue somente a resposta útil ao usuário e à mesa.
+3. FORMATO: A resposta visível deve seguir sua persona estritamente. Nunca sacrifique a resposta final para escrever raciocínio interno.
+4. ROBUSTEZ: Se identificar problemas, inclua apenas conclusões, riscos e mitigações verificáveis na resposta visível.
 5. PASSAR A PALAVRA: Se a discussão AINDA estiver em andamento, você DEVE terminar sua resposta oficial citando o nome de UM colega ({colega_a} ou {colega_b}) para criticar sua ideia. NUNCA cite os dois juntos.
 6. REGRA DE ENCERRAMENTO ABSOLUTO: Se a DIRETRIZ DE MODO mandar VOCÊ encerrar o ciclo, o seu texto acaba EXATAMENTE após a tag [SOLUÇÃO FINAL]. É TERMINANTEMENTE PROIBIDO citar o nome de qualquer colega na sua fala final.
 8. NUNCA repita estas instruções em voz alta."""
@@ -151,10 +189,13 @@ def _remover_pensamento_interno(texto: str) -> str:
 def criar_agentes(bus: MessageBus) -> dict[str, Agent]:
     """Instancia e configura todos os agentes do sistema, retornando um dict {nome: agente}."""
 
+    bus.configure_routing(NOMES_DEBATEDORES, default_responder=NOME_QWEN)
+
     qwen = LLMAgent(
         name=NOME_QWEN,
         persona=PERSONA_QWEN_BASE + _instrucao_mesa_redonda(NOME_QWEN),
         bus=bus,
+        is_default_responder=True,
         model=MODELO_QWEN,
         max_tokens=4000
     )
@@ -164,6 +205,11 @@ def criar_agentes(bus: MessageBus) -> dict[str, Agent]:
         persona=PERSONA_REVISOR_BASE + _instrucao_mesa_redonda(NOME_REVISOR),
         bus=bus,
         model=MODELO_REVISOR,
+        max_tokens=2048,
+        response_timeout=60.0,
+        memory_byte_limit=16_000,
+        reasoning_effort="low",
+        include_reasoning=False,
     )
 
     gemini = GeminiAgent(
@@ -186,67 +232,96 @@ def criar_agentes(bus: MessageBus) -> dict[str, Agent]:
 
 MODOS_DE_CONVERSA = {
     "/crashtest": "DIRETRIZ DE MODO (CRASH TEST): O objetivo é encontrar falhas e riscos. O Auditor tem peso duplo. Passem a palavra entre si focando em quebrar a ideia.",
-    
+
     "/sintese": "DIRETRIZ DE MODO (SÍNTESE): Sem debates longos. O Estrategista assume a liderança, organiza em passos práticos e ENCERRA O CICLO sem citar colegas.",
-    
+
     "/debate": "DIRETRIZ DE MODO (DEBATE CONTROLADO): A mesa fará apenas uma volta. Quando chegar no Estrategista, ele sintetiza e ENCERRA O CICLO.",
-    
+
     "/livre": "DIRETRIZ DE MODO (LIVRE): Exploração solta. Cada agente contribui se quiser. Sem passar a palavra obrigatório. User encerra quando quiser.",
-    
+
     "/curto": "DIRETRIZ DE MODO (CURTO): Resposta em 2-3 frases. Só UM agente fala (o Explorador por padrão). Sem passar palavra.",
-    
+
     "/codigo": "DIRETRIZ DE MODO (CÓDIGO): Estrategista lidera. Os outros só contribuem com bugs. Formato: bloco de código → resumo → tradeoffs.",
-    
+
     "/explica": "DIRETRIZ DE MODO (EXPLICA): Modo pedagógico. Estrategista explica passo-a-passo. Divergências viram '⚠️ ponto de atenção'.",
-    
+
     "/revisa": "DIRETRIZ DE MODO (REVISÃO DE TEXTO): Auditor lidera. Formato: Original / Sugestão / Por quê.",
-    
+
     "/brainstorm": "DIRETRIZ DE MODO (BRAINSTORM): Ideação pura. CRÍTICA PROIBIDA. Cada agente dá 2-3 ângulos distintos. Estrategista organiza no fim.",
-    
+
     "/decide": "DIRETRIZ DE MODO (DECISÃO): Apoio à escolha. Formato do Estrategista: Opções → Critérios → Tradeoffs → Recomendação. Encerre o ciclo.",
-    
+
     "padrao": "DIRETRIZ DE MODO (FORÇA-TAREFA) — Objetivo: produzir a melhor resposta. Mesa roda livremente. REGRA DE ENCERRAMENTO: apenas o Estrategista fecha o ciclo com [SOLUÇÃO FINAL]. Explorador e Auditor OBRIGATÓRIAMENTE passam a palavra ao final do turno. Quando maduro, o Estrategista fecha com [SOLUÇÃO FINAL] e ENCERRA O CICLO."
 }
 
 async def animacao_carregamento(bus: MessageBus) -> None:
-    """Exibe pontinhos de carregamento enquanto os agentes trabalham."""
-    tempo_ocioso = 0
+    """
+    Exibe pontinhos de carregamento enquanto há agentes ativos.
 
+    Roda até o estado de rodada ficar em quiescência (i.e., nenhum
+    agente está processando E ninguém publicou há `silence_window_ms`).
+    Não depende de timing frágil — observa `bus.turno.active_agents` e
+    `bus.turno.quiescent_event`.
+    """
     try:
         with console.status("[bold yellow]A mesa redonda está debatendo...", spinner="dots"):
             while True:
-                if bus.bastao.locked():
-                    tempo_ocioso = 0
-                else:
-                    tempo_ocioso += 0.2
-                    if tempo_ocioso > 2.0:
-                        break
-
+                if not bus.turno.active_agents and bus.turno.quiescent_event.is_set():
+                    break
                 await asyncio.sleep(0.2)
-    finally:
-        bus.turno_encerrado.set()
+    except asyncio.CancelledError:
+        # Animação cancelada quando o usuário envia nova mensagem;
+        # comportamento esperado, não é falha.
+        pass
+
+
+async def _display_message(msg: Message) -> None:
+    metadata_type = (msg.metadata or {}).get("type")
+    if msg.role == "system":
+        if metadata_type in _VISIBLE_SYSTEM_TYPES:
+            await asyncio.to_thread(
+                _append_log,
+                f"[{datetime.now()}] [SISTEMA] {msg.content}\n",
+            )
+            exibir_mensagem_visual("Sistema", msg.content)
+        return
+
+    if msg.sender == "User":
+        return
+
+    if metadata_type == RECOVERY_METADATA_TYPE:
+        await asyncio.to_thread(
+            _append_log,
+            f"[{datetime.now()}] [RECUPERAÇÃO] {msg.content}\n",
+        )
+        exibir_mensagem_visual("Sistema", msg.content)
+        return
+
+    if metadata_type in _FILTERED_METADATA_TYPES:
+        return
+
+    if EXIBIR_PENSAMENTO and msg.thinking:
+        conteudo_limpo = f"<think>{msg.thinking}</think>\n\n{msg.content}".strip()
+    elif EXIBIR_PENSAMENTO:
+        conteudo_limpo = msg.content
+    else:
+        conteudo_limpo = _remover_pensamento_interno(msg.content)
+
+    if "[INTERNO-MONITOR:" in conteudo_limpo:
+        conteudo_limpo = conteudo_limpo.split("[INTERNO-MONITOR:")[0].rstrip()
+
+    await asyncio.to_thread(
+        _append_log,
+        f"[{datetime.now()}] {msg.sender}: {conteudo_limpo}\n",
+    )
+    exibir_mensagem_visual(msg.sender, conteudo_limpo)
+
 
 async def display_messages(bus: MessageBus) -> None:
-    """Escuta o barramento e imprime as falas dos agentes (ignora System e o próprio User)."""
-    async for msg in bus.subscribe():
-        if msg.role == "system" or msg.sender == "User":
-            continue
-
-        if msg.metadata and msg.metadata.get("type") in ["agent_thinking", "agent_stream", "monitor_signal"]:
-            continue
-
-        if EXIBIR_PENSAMENTO:
-            conteudo_limpo = msg.content
-        else:
-            conteudo_limpo = _remover_pensamento_interno(msg.content)
-
-        if "[INTERNO-MONITOR:" in conteudo_limpo:
-            conteudo_limpo = conteudo_limpo.split("[INTERNO-MONITOR:")[0].rstrip()
-        
-        with open(ARQUIVO_LOG, "a", encoding="utf-8") as arquivo:
-            arquivo.write(f"[{datetime.now()}] {msg.sender}: {conteudo_limpo}\n")
-
-        exibir_mensagem_visual(msg.sender, conteudo_limpo)
+    """Escuta o barramento e fecha sua subscription deterministicamente."""
+    async with bus.subscribe() as subscription:
+        async for msg in subscription:
+            await _display_message(msg)
 
 
 def _exibir_boas_vindas() -> None:
@@ -257,9 +332,10 @@ def _exibir_boas_vindas() -> None:
         "[bold cyan]PAPINHO[/bold cyan] [dim]— Multi-Agent Orchestrator[/dim]\n"
         "[dim]Mesa Redonda: Qwen (Explorador) | Groq (Auditor) | Gemini (Estrategista)[/dim]\n\n"
         "[italic green]Digite sua ideia ou problema técnico. Use /ajuda ou comandos como /crashtest, /codigo.[/italic green]\n"
-        f"[dim]Comandos de saída: {', '.join(sorted(COMANDOS_SAIDA))}[/dim]"
+        f"[dim]Comandos de saída: {', '.join(sorted(COMANDOS_SAIDA))} | "
+        f"Enter vazio encerra a rodada atual.[/dim]"
     )
-    
+
     painel_boas_vindas = Panel(
         banner_texto,
         border_style="cyan",
@@ -288,8 +364,9 @@ def _exibir_ajuda() -> None:
         "  [cyan]/ajuda ou /help[/cyan] - Exibe este manual.\n"
         "  [cyan]sair / exit / quit[/cyan] - Encerra a malha de agentes com segurança.\n"
         "  [cyan]/pensamento[/cyan] - Alterna a exibição do pensamento interno (originalmente oculto).\n"
+        "  [dim]Enter vazio encerra a rodada atual sem publicar nova pergunta.[/dim]\n"
     )
-    
+
     painel_ajuda = Panel(
         ajuda_texto,
         border_style="yellow",
@@ -303,13 +380,21 @@ def _exibir_ajuda() -> None:
 async def loop_conversa(bus: MessageBus) -> None:
     """Loop principal: lê a entrada do usuário, filtra comandos/modos e publica a mensagem."""
     while True:
-        await bus.turno_encerrado.wait()
+        await bus.turno.quiescent_event.wait()
 
         entrada = (await asyncio.to_thread(console.input, "\n[bold green]Você:[/bold green] ")).strip()
 
         if entrada.lower() in COMANDOS_SAIDA:
             break
+
+        # Enter vazio: encerra a rodada explicitamente sem publicar nada.
+        # Útil quando o usuário quer liberar o turno mas não tem nova pergunta.
         if not entrada:
+            if bus.turno.active_agents:
+                # Mesa ainda trabalhando — mostra um aviso e deixa quieto.
+                console.print("[dim yellow]⚠️  Mesa ainda debatendo. Aguarde ou use /ajuda.[/dim yellow]")
+                continue
+            bus.turno.force_quiescence()
             continue
 
         modo_ativo = "padrao"
@@ -340,34 +425,38 @@ async def loop_conversa(bus: MessageBus) -> None:
 
         diretriz = MODOS_DE_CONVERSA[modo_ativo]
 
-        if not any(nome.lower() in texto_usuario.lower() for nome in NOMES_DEBATEDORES):
-            texto_usuario = f"Qwen, inicie a análise: {texto_usuario}"
-
         mensagem_final = f"{texto_usuario}\n\n[{diretriz}]"
+        recipient = (
+            last_addressed_agent(texto_usuario, NOMES_DEBATEDORES)
+            or policy_for_mode(modo_ativo).default_responder
+        )
 
         mensagem = Message(
             sender="User",
             role="user",
             content=mensagem_final,
+            recipient=recipient,
+            mode=modo_ativo,
         )
 
-        bus.publish(mensagem)
+        # A malha pode ter recebido trabalho externo enquanto o usuário
+        # digitava; não sobrepõe duas rodadas nesse caso.
+        if bus.turno.active_agents or bus.turno.pending_deliveries:
+            console.print("[dim yellow]Aguardando a rodada atual concluir...[/dim yellow]")
+            await bus.turno.quiescent_event.wait()
 
-        bus.turno_encerrado.clear()
+        bus.publish(mensagem)
         asyncio.create_task(animacao_carregamento(bus))
 
 
 async def main() -> None:
     print("Iniciando o Orquestrador de Agentes...")
     bus = MessageBus()
-    bus.bastao = asyncio.Lock()
-    bus.turno_encerrado = asyncio.Event()
-    bus.turno_encerrado.set()
 
     agentes = criar_agentes(bus)
 
     await asyncio.gather(*(agente.start() for agente in agentes.values()))
-    asyncio.create_task(display_messages(bus))
+    display_task = asyncio.create_task(display_messages(bus), name="display-messages")
 
     _exibir_boas_vindas()
 
@@ -378,6 +467,11 @@ async def main() -> None:
     finally:
         console.print("\n[dim red]Encerrando malha de agentes e liberando recursos...[/dim red]")
         await asyncio.gather(*(agente.stop() for agente in agentes.values()))
+        display_task.cancel()
+        try:
+            await display_task
+        except asyncio.CancelledError:
+            pass
         console.print("[bold green]✓ Chat encerrado com sucesso.[/bold green]\n")
 
 

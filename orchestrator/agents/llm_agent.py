@@ -1,122 +1,311 @@
+"""
+orchestrator/agents/llm_agent.py
+
+LLMAgent — debatedor genérico que chama um modelo de chat compatível com
+OpenAI (Groq, Ollama, vLLM, etc.) e publica no MessageBus.
+
+Mudanças desta versão:
+- Roteamento centralizado em orchestrator.router (tokenização por boundaries,
+  último debatedor citado).
+- CancelledError NÃO é capturado como falha — é re-raiseado imediatamente.
+- Pensamento interno (<think>...</think>) é extraído e armazenado em
+  Message.thinking, e enviado de volta ao próximo agente junto com a
+  resposta visível.
+- Erros viram mensagens de recuperação estruturadas (recovery.publish_recovery).
+"""
+import asyncio
 import os
 import re
-import asyncio
-from openai import AsyncOpenAI
+
 from dotenv import load_dotenv
-from orchestrator.agent import Agent
-from orchestrator.models import Message
+from openai import AsyncOpenAI
+
+from ..agent import Agent
+from ..models import Message
+from ..recovery import publish_recovery
+from ..router import is_addressed
 
 load_dotenv()
 
+
+_THINK_OPEN_RE = re.compile(r"<think>", flags=re.IGNORECASE)
+_THINK_CLOSE_RE = re.compile(r"</think>", flags=re.IGNORECASE)
+
+
+def _split_thinking(content: str) -> tuple[str, str]:
+    """
+    Separa o bloco <think>...</think> do resto do conteúdo visível.
+
+    Se o modelo esquecer de fechar a tag, fecha à força (mesma lógica
+    que o display_messages aplicava em chat_interativo.py). Se houver
+    conteúdo ANTES da tag <think> (ex.: o modelo escreveu "Oi!" antes de
+    abrir o bloco), esse conteúdo é preservado como visível.
+
+    Retorna (thinking, content_limpo).
+    """
+    if not content:
+        return "", ""
+
+    thinking_parts: list[str] = []
+    visible_parts: list[str] = []
+    cursor = 0
+
+    while match_open := _THINK_OPEN_RE.search(content, cursor):
+        visible_parts.append(content[cursor : match_open.start()])
+        match_close = _THINK_CLOSE_RE.search(content, match_open.end())
+
+        if match_close is None:
+            thinking_parts.append(content[match_open.end() :])
+            cursor = len(content)
+            break
+
+        thinking_parts.append(content[match_open.end() : match_close.start()])
+        cursor = match_close.end()
+
+    visible_parts.append(content[cursor:])
+
+    thinking = "\n".join(
+        part for raw_part in thinking_parts if (part := raw_part.strip())
+    )
+    content_limpo = " ".join(
+        part for raw_part in visible_parts if (part := raw_part.strip())
+    )
+    return thinking, content_limpo
+
+
+def _truncate(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "…"
+
+
+def _truncate_utf8(text: str, max_bytes: int) -> str:
+    """Trunca texto por bytes, preservando o início e o fim sem quebrar UTF-8."""
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    if max_bytes <= 0:
+        return ""
+
+    marker = "\n[… contexto truncado …]\n"
+    marker_bytes = marker.encode("utf-8")
+    if max_bytes <= len(marker_bytes):
+        return encoded[:max_bytes].decode("utf-8", errors="ignore")
+
+    content_budget = max_bytes - len(marker_bytes)
+    beginning_size = content_budget // 2
+    ending_size = content_budget - beginning_size
+    beginning = encoded[:beginning_size].decode("utf-8", errors="ignore")
+    ending = encoded[-ending_size:].decode("utf-8", errors="ignore")
+    return beginning + marker + ending
+
+
 class LLMAgent(Agent):
-    def __init__(self, name: str, persona: str, bus, is_default_responder: bool = False, model: str = "qwen/qwen3.6-27b", max_tokens: int = 1500):
-        super().__init__(name, persona=persona, bus=bus)
-        self.is_default_responder = is_default_responder
+    def __init__(
+        self,
+        name: str,
+        persona: str,
+        bus,
+        is_default_responder: bool = False,
+        model: str = "qwen/qwen3.6-27b",
+        max_tokens: int = 1500,
+        base_url: str = "https://api.groq.com/openai/v1",
+        timeout: float = 95.0,
+        response_timeout: float = 35.0,
+        api_key_env: str = "GROQ_API_KEY",
+        thinking_share_limit: int = 500,
+        memory_byte_limit: int = 24_000,
+        reasoning_effort: str | None = None,
+        include_reasoning: bool | None = None,
+        empty_response_retries: int = 1,
+    ):
+        super().__init__(
+            name,
+            persona=persona,
+            bus=bus,
+            is_default_responder=is_default_responder,
+        )
         self.model = model
         self.max_tokens = max_tokens
+        self.response_timeout = response_timeout
+        self.thinking_share_limit = thinking_share_limit
+        self.memory_byte_limit = memory_byte_limit
+        self.reasoning_effort = reasoning_effort
+        self.include_reasoning = include_reasoning
+        self.empty_response_retries = max(0, empty_response_retries)
 
         self.client = AsyncOpenAI(
-            api_key=os.getenv("GROQ_API_KEY"),
-            base_url="https://api.groq.com/openai/v1",
-            timeout=95.0
+            api_key=os.getenv(api_key_env),
+            base_url=base_url,
+            timeout=timeout,
         )
-        self.memory = []
+        self.memory: list[dict] = []
 
     async def on_message(self, message: Message):
         if message.role == "system" or message.sender == self.name:
             return
 
-        # Limpa pontuação antes do rfind para que "**Qwen,**" e "Qwen!" ativem igual.
-        texto_limpo_para_roteamento = re.sub(r'[^a-zA-Z0-9\s]', '', message.content.lower())
-
-        nomes_agentes = ["qwen", "groq", "gemini"]
-        ultimo_nome = None
-        maior_indice = -1
-
-        for nome in nomes_agentes:
-            indice = texto_limpo_para_roteamento.rfind(nome)
-            if indice > maior_indice:
-                maior_indice = indice
-                ultimo_nome = nome
-
-        is_addressed_to_me = (ultimo_nome == self.name.lower())
-
-        if not is_addressed_to_me and not (self.is_default_responder and message.sender == "User"):
+        if not is_addressed(message, self.name):
             return
 
-        async with self.bus.bastao:
-            if self.bus.history() and self.bus.history()[-1] is not message:
-                return
+        try:
+            response_text = await self.await_with_deadline(
+                self._call_llm(message, commit_memory=False),
+                timeout=self.response_timeout,
+                label=f"modelo {self.model}",
+            )
 
-            try:
-                response_text = await asyncio.wait_for(
-                    self._call_llm(message),
-                    timeout=35.0,
+            if not response_text:
+                raise ValueError(
+                    "A resposta da API veio completamente vazia (possível bloqueio de segurança)."
                 )
 
-                if not response_text:
-                    raise ValueError("A resposta da API da Groq veio completamente vazia (possível bloqueio de segurança).")
+            thinking, texto_limpo = _split_thinking(response_text)
+            retries = 0
+            while not texto_limpo and retries < self.empty_response_retries:
+                retries += 1
+                response_text = await self.await_with_deadline(
+                    self._call_llm(
+                        message,
+                        commit_memory=False,
+                        final_only=True,
+                    ),
+                    timeout=self.response_timeout,
+                    label=f"resposta final do modelo {self.model}",
+                )
+                thinking, texto_limpo = _split_thinking(response_text)
 
-                texto_limpo = re.sub(r"<think>.*?(?:</think>|$)\n*", "", response_text, flags=re.DOTALL).strip()
+            if not texto_limpo:
+                raise ValueError(
+                    "A IA processou, mas não produziu texto final visível após nova tentativa."
+                )
 
-                if not texto_limpo:
-                    raise ValueError("A IA processou, mas o texto final ficou vazio após a limpeza.")
-
-                nova_mensagem = Message(sender=self.name, role="assistant", content=texto_limpo)
-                self.bus.publish(nova_mensagem)
-
-            except asyncio.TimeoutError:
-                msg_bruta = next((m.content for m in self.bus.history() if m.sender == "User"), "")
-                if "analise esta mensagem do usuário: '" in msg_bruta:
-                    pedido_original = msg_bruta.split("analise esta mensagem do usuário: '")[1].split("\n\n[")[0]
-                else:
-                    pedido_original = "o desafio principal."
-
-                erro_msg = Message(
+            self._commit_memory(message, response_text)
+            self.bus.publish(
+                Message(
                     sender=self.name,
                     role="assistant",
-                    content=(
-                        f"[ALERTA DE SISTEMA: IGNORE O TIMEOUT ABAIXO. NÃO DEBATA SOBRE INFRAESTRUTURA DE API]\n"
-                        f"⏱️ Timeout (100s) na minha API Groq.\n\n"
-                        f"Gemini, pegue o bastão e continue o debate sem mim — sintetize e feche com [SOLUÇÃO FINAL] "
-                        f"baseado EXCLUSIVAMENTE no pedido original: {pedido_original}"
-                    ),
+                    content=texto_limpo,
+                    thinking=thinking,
+                    turn_id=message.turn_id,
+                    mode=message.mode,
+                    hop_count=message.hop_count + 1,
                 )
-                self.bus.publish(erro_msg)
+            )
 
-            except BaseException as e:
-                msg_bruta = next((m.content for m in self.bus.history() if m.sender == "User"), "")
-                if "analise esta mensagem do usuário: '" in msg_bruta:
-                    pedido_original = msg_bruta.split("analise esta mensagem do usuário: '")[1].split("\n\n[")[0]
-                else:
-                    pedido_original = "o desafio principal."
+        except asyncio.TimeoutError:
+            publish_recovery(
+                self.bus,
+                self.name,
+                TimeoutError(
+                    f"Timeout ({self.response_timeout:g}s) na chamada do modelo {self.model}"
+                ),
+                source_message=message,
+            )
 
-                erro_msg = Message(
-                    sender=self.name,
-                    role="assistant",
-                    content=(
-                        f"[ALERTA DE SISTEMA: IGNORE O ERRO ABAIXO. NÃO DEBATA SOBRE INFRAESTRUTURA DE API]\n"
-                        f"❌ Falha na minha API Groq: {type(e).__name__}: {e}\n\n"
-                        f"Gemini, minha API falhou. Pegue o bastão, sintetize o debate e feche com [SOLUÇÃO FINAL] "
-                        f"baseado EXCLUSIVAMENTE no pedido original: {pedido_original}"
-                    ),
-                )
-                self.bus.publish(erro_msg)
+        except asyncio.CancelledError:
+            raise
 
-    async def _call_llm(self, message: Message) -> str:
-        self.memory.append({"role": "user", "content": message.content})
-        if len(self.memory) > 4:
-            self.memory = self.memory[-4:]
+        except Exception as e:
+            publish_recovery(self.bus, self.name, e, source_message=message)
 
-        messages_payload = [{"role": "system", "content": self.persona}] + self.memory
+    async def _call_llm(
+        self,
+        message: Message,
+        *,
+        commit_memory: bool = True,
+        final_only: bool = False,
+    ) -> str:
+        # Constrói o turno do usuário incluindo o pensamento do autor da
+        # mensagem, se houver. Isso dá continuidade ao raciocínio da mesa.
+        user_content = self._format_user_turn(message)
+        if final_only:
+            user_content += (
+                "\n\n[CORREÇÃO DE FORMATO] Produza somente a resposta final visível, "
+                "sem tags <think>, sem raciocínio interno e sem repetir instruções."
+            )
+
+        user_entry = {"role": "user", "content": user_content}
+        candidate_memory = self._fit_memory([*self.memory, user_entry])
+        messages_payload = [
+            {"role": "system", "content": self.persona},
+            *candidate_memory,
+        ]
+
+        request_options = {
+            "model": self.model,
+            "messages": messages_payload,
+            "temperature": 0.7,
+            "max_completion_tokens": self.max_tokens,
+        }
+        provider_options = {}
+        if self.reasoning_effort is not None:
+            provider_options["reasoning_effort"] = self.reasoning_effort
+        if self.include_reasoning is not None:
+            provider_options["include_reasoning"] = self.include_reasoning
+        if provider_options:
+            # Campos específicos do endpoint compatível da Groq são enviados
+            # sem depender da versão instalada do cliente OpenAI.
+            request_options["extra_body"] = provider_options
 
         response = await self.client.chat.completions.create(
-            model=self.model,
-            messages=messages_payload,
-            temperature=0.7,
-            max_tokens=self.max_tokens,
+            **request_options,
         )
 
-        reply_text = response.choices[0].message.content
-        self.memory.append({"role": "assistant", "content": reply_text})
+        reply_text = response.choices[0].message.content or ""
+        if not reply_text or not _split_thinking(reply_text)[1]:
+            return reply_text
+
+        # Só confirma o turno na memória depois que a API respondeu. Falhas
+        # e respostas sem conteúdo visível não contaminam tentativas futuras.
+        if commit_memory:
+            self.memory = self._fit_memory(
+                [*candidate_memory, {"role": "assistant", "content": reply_text}]
+            )
         return reply_text
+
+    def _commit_memory(self, message: Message, reply_text: str) -> None:
+        """Confirma memória somente após a chamada respeitar o deadline."""
+        user_entry = {"role": "user", "content": self._format_user_turn(message)}
+        candidate_memory = self._fit_memory([*self.memory, user_entry])
+        self.memory = self._fit_memory(
+            [*candidate_memory, {"role": "assistant", "content": reply_text}]
+        )
+
+    def _fit_memory(self, messages: list[dict]) -> list[dict]:
+        """Mantém as mensagens mais recentes dentro do orçamento UTF-8."""
+        if self.memory_byte_limit <= 0:
+            return []
+
+        selected_reversed: list[dict] = []
+        remaining = self.memory_byte_limit
+
+        for message in reversed(messages):
+            content = str(message.get("content") or "")
+            content_size = len(content.encode("utf-8"))
+
+            if content_size <= remaining:
+                selected_reversed.append({**message, "content": content})
+                remaining -= content_size
+                continue
+
+            # A mensagem mais recente nunca é descartada por completo; ela é
+            # reduzida preservando começo e fim. Mensagens antigas que não
+            # cabem são simplesmente removidas.
+            if not selected_reversed and remaining > 0:
+                selected_reversed.append(
+                    {**message, "content": _truncate_utf8(content, remaining)}
+                )
+            break
+
+        return list(reversed(selected_reversed))
+
+    def _format_user_turn(self, message: Message) -> str:
+        """Inclui o pensamento do autor (se houver) antes da fala visível."""
+        if not message.thinking:
+            return message.content
+        thinking_trunc = _truncate(message.thinking, self.thinking_share_limit)
+        return (
+            f"[{message.sender} pensou]: {thinking_trunc}\n"
+            f"[{message.sender} disse]: {message.content}"
+        )

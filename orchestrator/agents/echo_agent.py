@@ -15,4 +15,4 @@ class EchoAgent(Agent):
         if self.name.lower() in message.content.lower():
             # Pega apenas os primeiros 50 caracteres da mensagem original para não acumular lixo
             safe_content = message.content[:50] + ("..." if len(message.content) > 50 else "")
-            self.publish(f"Echoing your message: {safe_content}")
+            self.publish(f"Echoing your message: {safe_content}", source=message)
